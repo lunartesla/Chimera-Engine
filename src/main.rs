@@ -20,6 +20,7 @@ use metamorphic_engine::self_evolving_engine::SelfEvolvingEngine;
 use metamorphic_engine::goal_definition::GoalDefinition;
 use metamorphic_engine::module_builders;
 use metamorphic_engine::evolution_daemon::EvolutionDaemon;
+use metamorphic_engine::engine_server::EngineServer;
 use metamorphic_engine::teacher::Teacher;
 use metamorphic_engine::ir_generator::IRGenerator;
 
@@ -229,6 +230,15 @@ async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
 
     let daemon_teacher = teacher.into_inner().ok().flatten();
 
+    // Create engine server with broadcast capability
+    let engine_server = EngineServer::new(9877);
+    let server_clone = engine_server.clone_server();
+
+    // Start the server in background
+    let server_handle = tokio::spawn(async move {
+        let _ = server_clone.start().await;
+    });
+
     let mut daemon = EvolutionDaemon::new(
         all_modules,
         "daemon_best_pipelines.json",
@@ -245,17 +255,19 @@ async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
     };
     daemon.set_goal(goal);
 
-    daemon.run(); // This is blocking in C++, so keep it blocking in Rust for now
+    // Set the engine server reference for broadcasting
+    daemon.set_engine_server(engine_server);
 
-    // The C++ main.cpp handled TCP server start/stop explicitly around daemon.run().
-    // The Rust daemon manages its own server.
+    // Run in a separate thread to not block the async runtime
+    let handle = tokio::task::spawn_blocking(move || {
+        daemon.run();
+    });
 
-    println!("\nFinal stats:");
-    println!("  Total generations: {}", daemon.total_generations());
-    for module in daemon.get_library().iter() {
-        let fit = daemon.best_fitness(&module.name);
-        if fit > -1e8 {
-            println!("  {}: {}", module.name, fit);
+    // Wait for daemon to complete or handle Ctrl-C
+    tokio::select! {
+        _ = handle => {}
+        _ = tokio::signal::ctrl_c() => {
+            info!("Ctrl-C received, shutting down daemon");
         }
     }
 

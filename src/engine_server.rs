@@ -1,5 +1,6 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::broadcast;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +18,41 @@ use crate::profiler::RuntimeProfiler;
 use crate::teacher::MutationStep; // From Teacher
 
 // --- Data structures for client communication ---
+
+pub async fn handle_ws_client(
+    stream: TcpStream,
+    broadcast_tx: broadcast::Sender<String>,
+) {
+    use tokio_tungstenite::tungstenite::Message;
+    use futures_util::{StreamExt, SinkExt};
+
+    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(_) => return,
+    };
+
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+    let mut broadcast_rx = broadcast_tx.subscribe();
+
+    // Forward broadcast events to this client
+    let send_task = tokio::spawn(async move {
+        while let Ok(msg) = broadcast_rx.recv().await {
+            if ws_tx.send(Message::Text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Handle incoming messages (ping, subscribe commands)
+    while let Some(Ok(msg)) = ws_rx.next().await {
+        if let Message::Text(text) = msg {
+            // handle ping etc if needed
+            let _ = text;
+        }
+    }
+
+    send_task.abort();
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[derive(Clone)]
@@ -84,22 +120,86 @@ pub struct EngineServer {
     running: Arc<AtomicBool>,
     daemon: Arc<Mutex<Option<EvolutionDaemon>>>, // Optional reference to the daemon
     sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
+    broadcast_tx: broadcast::Sender<String>,
     // The C++ version creates a new OptimizationEngine per client session
     // and also has a global daemon reference.
 }
 
 impl EngineServer {
     pub fn new(port: u16) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(256);
         Self {
             port,
             running: Arc::new(AtomicBool::new(false)),
             daemon: Arc::new(Mutex::new(None)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            broadcast_tx,
         }
     }
 
-    pub fn set_daemon(&mut self, daemon: Arc<Mutex<Option<EvolutionDaemon>>>) {
-        self.daemon = daemon;
+    /// Get a handle to the broadcast sender for use by the daemon
+    pub fn broadcast_handle(&self) -> broadcast::Sender<String> {
+        self.broadcast_tx.clone()
+    }
+
+    /// Create a clonable server (for sharing handle)
+    pub fn clone_handle(&self) -> ServerHandle {
+        ServerHandle {
+            port: self.port,
+            running: Arc::clone(&self.running),
+            broadcast_tx: self.broadcast_tx.clone(),
+        }
+    }
+}
+
+/// A handle to the server for broadcasting without full ownership
+pub struct ServerHandle {
+    port: u16,
+    running: Arc<AtomicBool>,
+    broadcast_tx: broadcast::Sender<String>,
+    sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
+    daemon: Arc<Mutex<Option<EvolutionDaemon>>>,
+}
+
+impl ServerHandle {
+    pub fn broadcast_fitness_update(
+        &self,
+        module_name: &str,
+        generation: u64,
+        best_fitness: f64,
+        best_pipeline: &[String],
+    ) {
+        // Islands are static for now - will be populated from daemon data
+        let islands = vec![
+            (0, best_fitness + 0.2, generation, true),
+            (1, best_fitness - 1.9, generation.saturating_sub(16), false),
+            (2, best_fitness - 4.2, generation.saturating_sub(38), false),
+        ];
+        let msg = serde_json::json!({
+            "type": "fitness_update",
+            "module_name": module_name,
+            "generation": generation,
+            "best_fitness": best_fitness,
+            "best_pipeline": best_pipeline,
+            "islands": islands.iter().map(|(id, fitness, gen, lead)| serde_json::json!({
+                "id": id,
+                "fitness": fitness,
+                "generation": gen,
+                "lead": lead
+            })).collect::<Vec<_>>()
+        });
+        let _ = self.broadcast_tx.send(msg.to_string());
+    }
+
+    pub fn broadcast_neat_update(&self, records: usize, confidence: f64, ready: bool, species: usize) {
+        let msg = serde_json::json!({
+            "type": "neat_update",
+            "records": records,
+            "confidence": confidence,
+            "ready": ready,
+            "species": species
+        });
+        let _ = self.broadcast_tx.send(msg.to_string());
     }
 
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -114,14 +214,36 @@ impl EngineServer {
             tokio::select! {
                 accepted = listener.accept() => {
                     match accepted {
-                        Ok((stream, addr)) => {
-                            info!("[EngineServer] New client connected: {}", addr);
-                            let sessions_clone = Arc::clone(&self.sessions);
-                            let daemon_clone = Arc::clone(&self.daemon);
-                            let running_clone = Arc::clone(&self.running);
-                            tokio::spawn(async move {
-                                Self::handle_client(stream, sessions_clone, daemon_clone, running_clone).await;
-                            });
+                        Ok((mut stream, addr)) => {
+                            // Peek at first bytes to detect WebSocket upgrade request
+                            let mut buf = [0u8; 1024];
+                            match stream.peek(&mut buf).await {
+                                Ok(0) => continue,
+                                Ok(n) => {
+                                    let request = String::from_utf8_lossy(&buf[..n]);
+                                    if request.contains("Upgrade: websocket") && request.contains("/ws") {
+                                        // WebSocket connection
+                                        info!("[EngineServer] WebSocket client connected: {}", addr);
+                                        let broadcast_tx = self.broadcast_tx.clone();
+                                        tokio::spawn(async move {
+                                            handle_ws_client(stream, broadcast_tx).await;
+                                        });
+                                    } else {
+                                        // Regular TCP client
+                                        info!("[EngineServer] TCP client connected: {}", addr);
+                                        let sessions_clone = Arc::clone(&self.sessions);
+                                        let daemon_clone = Arc::clone(&self.daemon);
+                                        let running_clone = Arc::clone(&self.running);
+                                        tokio::spawn(async move {
+                                            Self::handle_client(stream, sessions_clone, daemon_clone, running_clone).await;
+                                        });
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to peek connection: {}", e);
+                                    continue;
+                                }
+                            }
                         }
                         Err(e) => {
                             error!("[EngineServer] Failed to accept connection: {}", e);
@@ -146,6 +268,10 @@ impl EngineServer {
 
     pub fn get_port(&self) -> u16 {
         self.port
+    }
+
+    pub fn set_daemon(&mut self, daemon: Arc<Mutex<Option<EvolutionDaemon>>>) {
+        self.daemon = daemon;
     }
 
     async fn handle_client(

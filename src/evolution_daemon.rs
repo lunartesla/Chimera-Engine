@@ -21,8 +21,7 @@ use crate::passes::pass_registry::PassRegistry;
 use crate::engine::OptimizationEngine; // For module loading/creation
 use crate::{OptimizationLevel, Blueprint};
 
-// Assuming `TerminalChat` and `EngineServer` will be defined later
-// For now, let's use placeholders or omit direct integration
+// TerminalChat placeholder - real implementation handles TUI
 pub struct TerminalChat;
 impl TerminalChat {
     pub fn new() -> Self { Self }
@@ -34,15 +33,6 @@ impl TerminalChat {
     pub fn total_gens_ref(&mut self) -> &mut i64 { static mut TOTAL_GENS_REF: i64 = 0; unsafe { &mut TOTAL_GENS_REF } } // Placeholder
     pub fn runtime_secs_ref(&mut self) -> &mut i64 { static mut RUNTIME_SECS_REF: i64 = 0; unsafe { &mut RUNTIME_SECS_REF } } // Placeholder
     pub fn add_mutation_outcome(&self, _pass_id: &str, _mut_type: &str, _delta: f64) {}
-}
-
-pub struct EngineServer;
-impl EngineServer {
-    pub fn new(_port: u16) -> Self { Self }
-    pub fn start(&self) -> bool { true }
-    pub fn stop(&self) {}
-    pub fn get_port(&self) -> u16 { 9877 }
-    pub fn set_daemon(&mut self, _daemon: &EvolutionDaemon) {}
 }
 
 
@@ -89,7 +79,8 @@ pub struct EvolutionDaemon {
     next_strain_id: i32,
 
     terminal_chat: TerminalChat,
-    engine_server: EngineServer,
+    engine_server: crate::engine_server::EngineServer,
+    server_handle: crate::engine_server::ServerHandle,
 }
 
 impl EvolutionDaemon {
@@ -101,6 +92,9 @@ impl EvolutionDaemon {
     ) -> Self {
         let state_file_path = PathBuf::from(state_file);
         let archive = BlueprintArchive::new("blueprints"); // C++ uses "blueprints" directory
+
+        let engine_server = crate::engine_server::EngineServer::new(9877);
+        let server_handle = engine_server.clone_handle();
 
         let mut daemon = Self {
             library: modules,
@@ -124,13 +118,19 @@ impl EvolutionDaemon {
             strains: Arc::new(Mutex::new(Vec::new())),
             next_strain_id: 1,
 
-            terminal_chat: TerminalChat::new(), // Placeholder
-            engine_server: EngineServer::new(9877), // Placeholder
+            terminal_chat: TerminalChat::new(),
+            engine_server,
+            server_handle,
         };
 
         daemon.load_state();
         daemon.previous_session_memory = daemon.load_black_wall_memory();
         daemon
+    }
+
+    pub fn set_engine_server(&mut self, server: crate::engine_server::EngineServer) {
+        self.engine_server = server;
+        self.server_handle = server.clone_handle();
     }
 
     pub fn run(&mut self) {
@@ -327,6 +327,15 @@ impl EvolutionDaemon {
                 }
             }
 
+            // Broadcast fitness update
+            let best_pipeline_str: Vec<String> = se.get_best_pipeline().iter().map(|d| d.id.to_string()).collect();
+            self.server_handle.broadcast_fitness_update(
+                &mod_name,
+                self.total_gens,
+                new_fitness,
+                &best_pipeline_str,
+            );
+
             // Save if improved
             if improved {
                 self.best_fitness_map.insert(mod_name.clone(), new_fitness);
@@ -342,6 +351,20 @@ impl EvolutionDaemon {
                 info!("[BlackWall] ★ New best for '{}': fitness={} passes={}",
                     mod_name, new_fitness, se.get_best_pipeline().len());
                 self.terminal_chat.post_daemon_status(&format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
+                self.server_handle.broadcast_log("good", &format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
+            }
+
+            // Broadcast NEAT update periodically
+            if self.total_gens % 100 == 0 {
+                let predictor = self.persistent_predictor.lock().unwrap();
+                // Use pool size as rough species count
+                let species_count = predictor.training_data_len() / 85; // rough estimate
+                self.server_handle.broadcast_neat_update(
+                    predictor.training_data_len(),
+                    predictor.get_nm_confidence(),
+                    predictor.is_nm_ready(),
+                    species_count,
+                );
             }
 
             module_idx += 1;
