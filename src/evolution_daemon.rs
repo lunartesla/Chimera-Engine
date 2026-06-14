@@ -129,8 +129,9 @@ impl EvolutionDaemon {
     }
 
     pub fn set_engine_server(&mut self, server: crate::engine_server::EngineServer) {
+        let handle = server.clone_handle();
         self.engine_server = server;
-        self.server_handle = server.clone_handle();
+        self.server_handle = handle;
     }
 
     pub fn run(&mut self) {
@@ -152,12 +153,16 @@ impl EvolutionDaemon {
         info!("  Pipeline cap: {} passes (RAM sanitation ON)", MAX_PASSES);
         info!("  Press Ctrl+C to stop.\n");
 
-        // Start TCP server
-        if self.engine_server.start() {
-            info!("[EngineServer] TCP server started on port {}", self.engine_server.get_port());
-        } else {
-            warn!("[EngineServer] Warning: Failed to start TCP server");
+        // Start TCP server on background task
+        {
+            let server_task_handle = self.server_handle.clone();
+            tokio::spawn(async move {
+                if let Err(e) = server_task_handle.start().await {
+                    error!("[EngineServer] Server error: {}", e);
+                }
+            });
         }
+        info!("[EngineServer] TCP server started on port {}", self.server_handle.get_port());
         // self.engine_server.set_daemon(self); // Skipped: self-referential borrow not possible in safe Rust
 
         // Start terminal chat
@@ -331,7 +336,7 @@ impl EvolutionDaemon {
             let best_pipeline_str: Vec<String> = se.get_best_pipeline().iter().map(|d| d.id.to_string()).collect();
             self.server_handle.broadcast_fitness_update(
                 &mod_name,
-                self.total_gens,
+                self.total_gens as u64,
                 new_fitness,
                 &best_pipeline_str,
             );

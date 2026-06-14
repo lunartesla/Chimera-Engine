@@ -148,11 +148,14 @@ impl EngineServer {
             port: self.port,
             running: Arc::clone(&self.running),
             broadcast_tx: self.broadcast_tx.clone(),
+            sessions: Arc::clone(&self.sessions),
+            daemon: Arc::clone(&self.daemon),
         }
     }
 }
 
 /// A handle to the server for broadcasting without full ownership
+#[derive(Clone)]
 pub struct ServerHandle {
     port: u16,
     running: Arc<AtomicBool>,
@@ -198,6 +201,15 @@ impl ServerHandle {
             "confidence": confidence,
             "ready": ready,
             "species": species
+        });
+        let _ = self.broadcast_tx.send(msg.to_string());
+    }
+
+    pub fn broadcast_log(&self, level: &str, message: &str) {
+        let msg = serde_json::json!({
+            "type": "log",
+            "level": level,
+            "message": message,
         });
         let _ = self.broadcast_tx.send(msg.to_string());
     }
