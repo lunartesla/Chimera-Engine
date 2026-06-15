@@ -1,6 +1,9 @@
-# Exclude generated/vendored code from language statistics
+# Exclude build artifacts from language statistics
 target/ linguist-generated=true
 *.lock linguist-generated=true
+
+# Exclude HTML generated files
+*.html linguist-generated=true
 
 # Mark Rust files explicitly
 *.rs linguist-language=Rust
