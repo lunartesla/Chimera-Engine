@@ -232,7 +232,7 @@ async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
 
     // Create engine server with broadcast capability
     let engine_server = EngineServer::new(9877);
-    let server_clone = engine_server.clone_server();
+    let server_clone = engine_server.clone_handle();
 
     // Start the server in background
     let server_handle = tokio::spawn(async move {

@@ -397,7 +397,7 @@ impl EvolutionDaemon {
         info!("\n[Daemon] Stop requested — finishing current cycle...");
         self.stopped.store(true, Ordering::Relaxed);
         self.terminal_chat.stop();
-        self.engine_server.stop();
+        self.server_handle.stop();
         self.save_black_wall_memory();
     }
 
