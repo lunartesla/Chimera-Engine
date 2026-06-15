@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Concat","CoreWriteAsPartsWrite","LossyWrap","TryWriteableInfallibleAsWriteable","WithPart","WriteableAsTryWriteableInfallible"]};
