@@ -81,6 +81,7 @@ pub struct EvolutionDaemon {
     terminal_chat: TerminalChat,
     engine_server: crate::engine_server::EngineServer,
     server_handle: crate::engine_server::ServerHandle,
+    last_broadcast: Instant,
 }
 
 impl EvolutionDaemon {
@@ -121,6 +122,7 @@ impl EvolutionDaemon {
             terminal_chat: TerminalChat::new(),
             engine_server,
             server_handle,
+            last_broadcast: Instant::now(),
         };
 
         daemon.load_state();
@@ -153,16 +155,7 @@ impl EvolutionDaemon {
         info!("  Pipeline cap: {} passes (RAM sanitation ON)", MAX_PASSES);
         info!("  Press Ctrl+C to stop.\n");
 
-        // Start TCP server on background task
-        {
-            let server_task_handle = self.server_handle.clone();
-            tokio::spawn(async move {
-                if let Err(e) = server_task_handle.start().await {
-                    error!("[EngineServer] Server error: {}", e);
-                }
-            });
-        }
-        info!("[EngineServer] TCP server started on port {}", self.server_handle.get_port());
+        info!("[EngineServer] TCP server running on port {}", self.server_handle.get_port());
         // self.engine_server.set_daemon(self); // Skipped: self-referential borrow not possible in safe Rust
 
         // Start terminal chat
@@ -332,14 +325,30 @@ impl EvolutionDaemon {
                 }
             }
 
-            // Broadcast fitness update
-            let best_pipeline_str: Vec<String> = se.get_best_pipeline().iter().map(|d| d.id.to_string()).collect();
-            self.server_handle.broadcast_fitness_update(
-                &mod_name,
-                self.total_gens as u64,
-                new_fitness,
-                &best_pipeline_str,
-            );
+            // Broadcast fitness update — throttled to ~5/sec regardless of loop speed,
+            // since trivial synthetic modules can complete evolve() in microseconds
+            // and would otherwise flood the dashboard with hundreds of msgs/sec.
+            if self.last_broadcast.elapsed().as_millis() >= 200 {
+                let best_pipeline_str: Vec<String> = se.get_best_pipeline().iter().map(|d| d.id.to_string()).collect();
+                self.server_handle.broadcast_fitness_update(
+                    &mod_name,
+                    self.total_gens as u64,
+                    new_fitness,
+                    &best_pipeline_str,
+                );
+
+                let predictor = self.persistent_predictor.lock().unwrap();
+                let species_count = predictor.training_data_len() / 85;
+                self.server_handle.broadcast_neat_update(
+                    predictor.training_data_len(),
+                    predictor.get_nm_confidence(),
+                    predictor.is_nm_ready(),
+                    species_count,
+                );
+                drop(predictor);
+
+                self.last_broadcast = Instant::now();
+            }
 
             // Save if improved
             if improved {
@@ -357,19 +366,6 @@ impl EvolutionDaemon {
                     mod_name, new_fitness, se.get_best_pipeline().len());
                 self.terminal_chat.post_daemon_status(&format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
                 self.server_handle.broadcast_log("good", &format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
-            }
-
-            // Broadcast NEAT update periodically
-            if self.total_gens % 100 == 0 {
-                let predictor = self.persistent_predictor.lock().unwrap();
-                // Use pool size as rough species count
-                let species_count = predictor.training_data_len() / 85; // rough estimate
-                self.server_handle.broadcast_neat_update(
-                    predictor.training_data_len(),
-                    predictor.get_nm_confidence(),
-                    predictor.is_nm_ready(),
-                    species_count,
-                );
             }
 
             module_idx += 1;

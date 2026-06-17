@@ -28,7 +28,10 @@ pub async fn handle_ws_client(
 
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
-        Err(_) => return,
+        Err(e) => {
+            error!("[EngineServer] WebSocket handshake failed: {}", e);
+            return;
+        }
     };
 
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
@@ -233,7 +236,8 @@ impl ServerHandle {
                                 Ok(0) => continue,
                                 Ok(n) => {
                                     let request = String::from_utf8_lossy(&buf[..n]);
-                                    if request.contains("Upgrade: websocket") && request.contains("/ws") {
+                                    let request_lower = request.to_ascii_lowercase();
+                                    if request_lower.contains("upgrade: websocket") {
                                         // WebSocket connection
                                         info!("[EngineServer] WebSocket client connected: {}", addr);
                                         let broadcast_tx = self.broadcast_tx.clone();

@@ -3,7 +3,7 @@ import React from 'react';
 const TERRACOTTA = '#DA7756';
 const GREEN = '#81C784';
 
-export default function TopBar({ currentModule, goal, running, generation }) {
+export default function TopBar({ currentModule, running, generation }) {
   return (
     <div style={{
       display: 'flex',
@@ -16,10 +16,10 @@ export default function TopBar({ currentModule, goal, running, generation }) {
     }}>
       <div>
         <h1 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: '#FAF9F5' }}>
-          Metamorphic Engine Dashboard
+          Chimera Engine Dashboard
         </h1>
         <div style={{ fontSize: 11, color: 'rgba(250,249,245,0.4)', marginTop: 2 }}>
-          Module: <span style={{ color: TERRACOTTA }}>{currentModule}</span> | Goal: <span style={{ color: TERRACOTTA }}>{goal}</span>
+          Module: <span style={{ color: TERRACOTTA }}>{currentModule ?? '—'}</span>
         </div>
       </div>
 
