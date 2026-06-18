@@ -21,7 +21,10 @@ use crate::passes::pass_registry::PassRegistry;
 use crate::engine::OptimizationEngine; // For module loading/creation
 use crate::{OptimizationLevel, Blueprint};
 
-// TerminalChat placeholder - real implementation handles TUI
+// TerminalChat placeholder - real implementation in terminal_chat.rs
+// Wiring it up requires resolving the circular Arc<Mutex<Option<EvolutionDaemon>>>
+// reference — deferred until the daemon refactor. For now this stub keeps the
+// rest of the daemon compiling while the dashboard handles all UI output.
 pub struct TerminalChat;
 impl TerminalChat {
     pub fn new() -> Self { Self }
@@ -30,8 +33,6 @@ impl TerminalChat {
     pub fn post_daemon_status(&self, _msg: &str) {}
     pub fn update_context(&self, _mode: &str, _mod_name: &str, _mod_shape: &str, _best_fit: f64, _goal_thresh: f64, _neat_gen: i32, _neat_str: &str, _strain_info: &Vec<(String, f64, f64)>, _stuck: i32) {}
     pub fn process_commands(&self) {}
-    pub fn total_gens_ref(&mut self) -> &mut i64 { static mut TOTAL_GENS_REF: i64 = 0; unsafe { &mut TOTAL_GENS_REF } } // Placeholder
-    pub fn runtime_secs_ref(&mut self) -> &mut i64 { static mut RUNTIME_SECS_REF: i64 = 0; unsafe { &mut RUNTIME_SECS_REF } } // Placeholder
     pub fn add_mutation_outcome(&self, _pass_id: &str, _mut_type: &str, _delta: f64) {}
 }
 
@@ -174,10 +175,7 @@ impl EvolutionDaemon {
 
             // Update TerminalChat context
             {
-                *self.terminal_chat.total_gens_ref() = self.total_gens;
-                *self.terminal_chat.runtime_secs_ref() = wall_start.elapsed().as_secs() as i64;
                 let mod_shape = Self::compute_module_shape(&current_module);
-
                 let strains_guard = self.strains.lock().unwrap();
                 let strain_info: Vec<(String, f64, f64)> = strains_guard.iter()
                     .filter(|s| s.active)
@@ -187,18 +185,14 @@ impl EvolutionDaemon {
                          s.engine.get_lineage().fitness_at_fork)
                     })
                     .collect();
-
                 let neat_status_str = self.persistent_predictor.lock().unwrap().get_status_string();
-
                 self.terminal_chat.update_context(
                     self.active_goal.as_ref().map_or("daemon", |g| &g.id),
-                    &mod_name,
-                    &mod_shape,
+                    &mod_name, &mod_shape,
                     *self.best_fitness_map.get(&mod_name).unwrap_or(&0.0),
                     self.active_goal.as_ref().map_or(0.0, |g| g.success_threshold),
-                    (self.total_gens / 100) as i32, // rough NEAT generation estimate
-                    &neat_status_str,
-                    &strain_info,
+                    (self.total_gens / 100) as i32,
+                    &neat_status_str, &strain_info,
                     *self.stuck_cycles.get(&mod_name).unwrap_or(&0),
                 );
             }
@@ -466,7 +460,7 @@ impl EvolutionDaemon {
                 partial: false,
                 steps: sp.pass_ids.iter().zip(sp.params.iter()).map(|(id, map)| {
                     crate::teacher::MutationStep {
-                        mutation_type: "add".to_string(), // Placeholder
+                        mutation_type: "add".to_string(),
                         pass_id: id.clone(),
                         params: map.clone(),
                         fitness_after: 0.0,

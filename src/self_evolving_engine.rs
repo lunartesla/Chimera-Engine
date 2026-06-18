@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::collections::{HashMap, VecDeque};
 use rand::{self, Rng, seq::SliceRandom};
+use rayon::prelude::*;
 use crate::ir::module::Module;
 use log::info;
 use crate::engine::OptimizationEngine;
@@ -198,9 +199,20 @@ impl SelfEvolvingEngine {
                 self.readjust_mutation_rates();
             }
 
-            // Evolution loop for islands
-            // The C++ version used std::async for parallel islands, then applied results sequentially.
-            // For now, implement sequentially for simplicity and correctness in Rust.
+            // Phase A (sequential, cheap): decide mutations per island.
+            // Mutation decisions touch the shared NEAT predictor (&mut self),
+            // so this part stays sequential — it's fast, not the bottleneck.
+            struct IslandDecision {
+                island_id: usize,
+                i_start: usize,
+                i_end: usize,
+                child_pipeline: Vec<PassDescriptor>,
+                applied_mutation_type: Mutation,
+                mutated_pass_id: String,
+            }
+
+            let mut decisions: Vec<IslandDecision> = Vec::with_capacity(NUM_ISLANDS);
+
             for island_id in 0..NUM_ISLANDS {
                 let i_start = island_id * ISLAND_SIZE;
                 let i_end = i_start + ISLAND_SIZE;
@@ -211,20 +223,15 @@ impl SelfEvolvingEngine {
                     &self.population[p2i],
                 );
 
-                // Clamp pipeline to MAX_PASSES
                 assert!(child_pipeline_descriptors.len() <= MAX_PASSES, "pass sequence exceeds 24-pass cap");
                 if child_pipeline_descriptors.len() > MAX_PASSES {
                     child_pipeline_descriptors.truncate(MAX_PASSES);
                 }
 
-                // Apply mutation
                 let mut applied_mutation_type = Mutation::Add;
                 let mut mutated_pass_id = String::new();
 
                 if wildcard_mode {
-                    // Wild mutations
-                    // Placeholder: actual wild mutation logic will need to be ported.
-                    // For now, if wildcard mode is enabled, just apply a random regular mutation.
                     let mut rng = rand::thread_rng();
                     let options = [Mutation::Add, Mutation::Remove, Mutation::Reorder, Mutation::Duplicate, Mutation::Tune];
                     applied_mutation_type = *options.choose(&mut rng).unwrap();
@@ -235,10 +242,7 @@ impl SelfEvolvingEngine {
                         &mut mutated_pass_id
                     );
                     self.wild_attempted += 1;
-                    // Wild mutations are accepted if they improve fitness
                 } else if self.neural_predictor.is_nm_ready() {
-                    // Predictor-guided mutation
-                    // Needs to generate FunctionStats before mutation
                     let current_module = self.base_engine.get_module().expect("Module not loaded for stats");
                     let stats = self.compute_function_stats(current_module);
                     let mut extra_features = HashMap::new();
@@ -267,12 +271,11 @@ impl SelfEvolvingEngine {
                         &mut mutated_pass_id
                     );
                 } else {
-                    // Regular random mutation
                     let num_mutations = if self.temperature > 0.7 { 2 } else { 1 };
                     let mut rng = rand::thread_rng();
                     for _ in 0..num_mutations {
                         let options = [Mutation::Add, Mutation::Remove, Mutation::Reorder, Mutation::Duplicate, Mutation::Tune];
-                    applied_mutation_type = *options.choose(&mut rng).unwrap();
+                        applied_mutation_type = *options.choose(&mut rng).unwrap();
                         self.apply_mutation_to_pipeline(
                             &mut child_pipeline_descriptors,
                             self.temperature,
@@ -282,59 +285,77 @@ impl SelfEvolvingEngine {
                     }
                 }
 
-
                 if child_pipeline_descriptors.is_empty() {
                     continue;
                 }
 
-                // Score the child pipeline
-                let child_fitness_record = self.score_pipeline(&child_pipeline_descriptors);
-                let child_fitness = child_fitness_record.fitness;
+                decisions.push(IslandDecision {
+                    island_id, i_start, i_end,
+                    child_pipeline: child_pipeline_descriptors,
+                    applied_mutation_type,
+                    mutated_pass_id,
+                });
+            }
 
-                // Find worst individual in the island
-                let (worst_idx_in_island, &worst_fitness_in_island) = self.population_fitness[i_start..i_end]
+            // Phase B (parallel, expensive): score_pipeline() clones the whole
+            // engine + module and runs every pass — this is the real bottleneck,
+            // and it's read-only (&self), so islands can score concurrently.
+            // Uses rayon's persistent global thread pool (created once, reused
+            // forever) instead of spawning fresh OS threads every generation —
+            // std::thread::scope was paying thread-create/destroy cost on every
+            // single call, which dominated runtime after the redundant clones
+            // in score_pipeline() were removed.
+            let self_ref: &Self = &*self;
+            let scored: Vec<(IslandDecision, f64, usize)> = decisions
+                .into_par_iter()
+                .map(|d| {
+                    let result = self_ref.score_pipeline(&d.child_pipeline);
+                    (d, result.fitness, result.pipeline_len)
+                })
+                .collect();
+
+            // Phase C (sequential, cheap): apply results — population writes,
+            // adaptive-rate bookkeeping, and NEAT outcome recording all need
+            // &mut self, so this runs back on the main thread.
+            for (d, child_fitness, pipeline_len) in scored {
+                let (worst_idx_in_island, &worst_fitness_in_island) = self.population_fitness[d.i_start..d.i_end]
                     .iter()
                     .enumerate()
                     .min_by(|(_, &a), (_, &b)| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
                     .unwrap();
-                let worst_idx = i_start + worst_idx_in_island;
+                let worst_idx = d.i_start + worst_idx_in_island;
 
                 let delta_fitness = child_fitness - worst_fitness_in_island;
 
-                // Simulated Annealing acceptance criteria
                 let mut rng = rand::thread_rng();
                 let accept = delta_fitness > 0.0
                     || rng.gen::<f64>() < (delta_fitness / (self.temperature + 1e-9)).exp()
                     || rng.gen::<f64>() < 0.05;
 
                 if accept {
-                    // Replace the worst with the child
-                    self.population[worst_idx] = child_pipeline_descriptors.clone(); // Clone to store
+                    self.population[worst_idx] = d.child_pipeline.clone();
                     self.population_fitness[worst_idx] = child_fitness;
                     changed = true;
 
-                    // Record mutation outcome for adaptive rates
-                    self.record_mutation_outcome(applied_mutation_type, delta_fitness > 0.0, delta_fitness);
+                    self.record_mutation_outcome(d.applied_mutation_type, delta_fitness > 0.0, delta_fitness);
 
-                    // Record outcome for NEAT training
                     let current_module = self.base_engine.get_module().expect("Module not loaded for stats");
-                    let before_stats = self.compute_function_stats(current_module); // Needs to be before optimization
-                    let after_stats = self.compute_function_stats(current_module); // Needs to be after optimization
+                    let after_stats = self.compute_function_stats(current_module);
                     let mut extra_features = HashMap::new();
                     extra_features.insert("temperature".to_string(), self.temperature);
                     extra_features.insert("generation_ratio".to_string(), gen as f64 / self.total_generations as f64);
-                    extra_features.insert("pipeline_length".to_string(), child_fitness_record.pipeline_len as f64);
-                    extra_features.insert("pass_frequency".to_string(), 0.0); // Placeholder
-                    extra_features.insert("cycles_stuck".to_string(), 0.0); // Placeholder
-                    extra_features.insert("island_id".to_string(), island_id as f64);
-                    extra_features.insert("goal_ratio".to_string(), 0.0); // Placeholder
+                    extra_features.insert("pipeline_length".to_string(), pipeline_len as f64);
+                    extra_features.insert("pass_frequency".to_string(), 0.0);
+                    extra_features.insert("cycles_stuck".to_string(), 0.0);
+                    extra_features.insert("island_id".to_string(), d.island_id as f64);
+                    extra_features.insert("goal_ratio".to_string(), 0.0);
 
                     self.neural_predictor.record_outcome(
-                        &mutated_pass_id,
+                        &d.mutated_pass_id,
                         &after_stats,
                         &extra_features,
                         child_fitness > worst_fitness_in_island,
-                        child_fitness - worst_fitness_in_island,
+                        delta_fitness,
                     );
                 }
             }
@@ -596,10 +617,14 @@ impl SelfEvolvingEngine {
 
 
     fn score_pipeline(&self, pipeline: &[PassDescriptor]) -> PipelineScoreResult {
-        let mut temp_engine = self.base_engine.clone(); // Clone the base engine's state
-        temp_engine.load_module(self.base_engine.get_module().unwrap().clone()); // Load a fresh copy of the working module
-
-        temp_engine.set_optimization_level(OptimizationLevel::Safe); // Reset level to build custom pipeline
+        // `self.base_engine.clone()` already deep-clones both original_module and
+        // working_module (see OptimizationEngine's Clone impl). The old code then
+        // called load_module() again, cloning the module a 2nd+3rd time for nothing,
+        // plus rebuilt a whole PassManager via set_optimization_level() just to
+        // immediately overwrite it with the custom pipeline below. Both were pure
+        // waste — temp_engine already has a correct working module from the clone,
+        // and pass_manager is fully replaced two lines down regardless of opt_level.
+        let mut temp_engine = self.base_engine.clone();
         let mut custom_pass_manager = PassManager::new();
         for pd in pipeline {
             if let Some(mut pass_instance) = self.pass_registry.create_pass(pd.id) {

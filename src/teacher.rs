@@ -257,10 +257,11 @@ impl Teacher {
         if result.is_empty() { None } else { Some(result) }
     }
 
-    // C++ had getNMConfidence, but the prompt says this is not directly used in Rust port plan
     pub fn get_nm_confidence(&self) -> f64 {
-        // Placeholder, as C++ Teacher has this but the prompt doesn't map it directly to Rust Teacher here
-        // The NeuralPredictor itself has a get_nm_confidence method
+        // Teacher doesn't own the NeuralPredictor — caller should query
+        // persistent_predictor directly. This method exists for C++ API compat;
+        // returning 0.0 here is safe since evolution_daemon.rs already reads
+        // confidence from persistent_predictor.lock().unwrap().get_nm_confidence().
         0.0
     }
 }
