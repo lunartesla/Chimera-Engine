@@ -24,6 +24,13 @@ use metamorphic_engine::engine_server::EngineServer;
 use metamorphic_engine::teacher::Teacher;
 use metamorphic_engine::ir_generator::IRGenerator;
 
+// score_pipeline() in self_evolving_engine.rs is allocation-heavy (clones whole
+// modules + builds PassManagers on every call, now happening in parallel across
+// islands). mimalloc handles this kind of small/short-lived-allocation-heavy
+// workload meaningfully faster than the system default allocator.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 // Constants from C++ main.cpp or defaults
 const OPENROUTER_API_KEY_ENV: &str = "OPENROUTER_API_KEY";
 

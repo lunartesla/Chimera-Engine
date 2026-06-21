@@ -242,6 +242,16 @@ impl EvolutionDaemon {
             }
             self.total_gens += 100;
 
+            // Sync trained state back into the daemon's persistent predictor.
+            // set_external_predictor() only copies state INTO se — every accepted
+            // mutation inside evolve() trains se's own local NeuralPredictor copy,
+            // which was being silently discarded when `se` dropped at the end of
+            // this loop body. persistent_predictor (what the dashboard reads via
+            // broadcast_neat_update) was never receiving any of it back, so
+            // records/confidence/ready stayed stuck at 0 forever despite real
+            // training happening every single cycle.
+            *self.persistent_predictor.lock().unwrap() = se.get_predictor().clone_state();
+
             // Strain fork decision
             let task_class = self.active_goal.as_ref().map_or("free_evolution".to_string(), |g| g.id.clone());
             if self.should_fork_strain(&mod_name, &se) {
@@ -293,6 +303,7 @@ impl EvolutionDaemon {
                             se.add_pass(&suggestion.pass_id); // Assuming add_pass exists
                             se.evolve(50, self.wildcard_mode);
                             self.total_gens += 50;
+                            *self.persistent_predictor.lock().unwrap() = se.get_predictor().clone_state();
                             let new_fitness_after_injection = se.get_best_fitness();
 
                             if new_fitness_after_injection > new_fitness + 0.01 { // Check if injection helped
