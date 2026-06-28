@@ -1,14 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ── Real wire protocol only ───────────────────────────────────────────────
-// The engine broadcasts exactly 3 message types over ws://localhost:9877/ws:
+// The engine broadcasts these message types over ws://localhost:9877/ws:
 //   fitness_update { module_name, generation, best_fitness, best_pipeline, islands }
 //   neat_update    { records, confidence, ready, species }
+//   strain_update  { strains: [{ id, specialty, fitness, generations, gateLevel,
+//                                 nmRecords, nmConfidence, nmReady, forkTimestamp, taskClass }] }
+//   tuning_update  { tuning: { stuck_cycles_before_fork, evolve_batch_size,
+//                               nm_ready_threshold, strain_generation_cap } }
 //   log            { level, message }
 // Note: `islands` is a static formula on the Rust side (best_fitness ± offset),
 // not real per-island state. We display it as-is but don't pretend it's more.
-// Strains / pass-frequency / blueprints have NO backing broadcast yet — the UI
-// must say so honestly rather than fabricate data.
+// strain_update / tuning_update are real, pushed every daemon cycle (strains
+// also push right after each background burst) and on every tuning change.
 
 const MAX_HISTORY = 200;
 const MAX_LOG = 100;
@@ -26,6 +30,8 @@ const INITIAL_STATE = {
   neatConfidence: 0,
   neatReady: false,
   neatSpecies: 0,
+  strains: [],
+  tuning: null,
   log: [],
 };
 
@@ -78,16 +84,26 @@ export function useEngineSocket() {
     }));
   }, []);
 
+  const applyStrainUpdate = useCallback((msg) => {
+    setState(s => ({ ...s, strains: msg.strains ?? [] }));
+  }, []);
+
+  const applyTuningUpdate = useCallback((msg) => {
+    setState(s => ({ ...s, tuning: msg.tuning ?? s.tuning }));
+  }, []);
+
   const handleMessage = useCallback((raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     switch (msg.type) {
       case 'fitness_update': applyFitnessUpdate(msg); break;
       case 'neat_update':    applyNeatUpdate(msg); break;
+      case 'strain_update':  applyStrainUpdate(msg); break;
+      case 'tuning_update':  applyTuningUpdate(msg); break;
       case 'log':            addLog(msg.level || 'info', msg.message); break;
       default: break; // unknown type — ignore, don't fabricate
     }
-  }, [applyFitnessUpdate, applyNeatUpdate, addLog]);
+  }, [applyFitnessUpdate, applyNeatUpdate, applyStrainUpdate, applyTuningUpdate, addLog]);
 
   // ── demo mode: simulates the SAME 3 message shapes, nothing extra ──────
   const startDemo = useCallback(() => {

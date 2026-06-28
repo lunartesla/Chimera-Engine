@@ -38,6 +38,11 @@ impl DeadCodeEliminationPass {
                 Self::collect_used_vars(val_inst, used);
             }
             Instruction::Return { value: None } => {}
+            Instruction::Call { args, .. } => {
+                for arg in args {
+                    Self::collect_used_vars(arg, used);
+                }
+            }
         }
     }
 }

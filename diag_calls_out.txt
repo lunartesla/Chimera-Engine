@@ -1,0 +1,13 @@
+﻿cargo :    Compiling metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+At line:1 char:59
++ ... gine\Rust'; cargo run --release --example diagnose_calls 2>&1 | Out-F ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling me...ry engine\Rust):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `release` profile [optimized] target(s) in 1m 19s
+     Running `target\release\examples\diagnose_calls.exe`
+Module 'target_calltest' ÔÇö 1 function(s), baseline instrs: 2, ceiling: 2
+  fn 'helper' params=["0"] blocks=1
+  Interpreted result of 'helper': Ok(21)
+  Expected (hand-computed compute(10)): 100

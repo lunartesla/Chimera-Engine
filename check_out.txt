@@ -1,0 +1,41 @@
+﻿cargo :     Checking metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+At line:1 char:59
++ ... ek\engine_back_up\Evolutionary engine\Rust'; cargo check 2>&1 | Out-F ...
++                                                  ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking me...ry engine\Rust):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unused import: `metamorphic_engine::ir::function::Function`
+  --> src\main.rs:13:5
+   |
+13 | use metamorphic_engine::ir::function::Function;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `metamorphic_engine::ir::value::ValueType`
+  --> src\main.rs:14:5
+   |
+14 | use metamorphic_engine::ir::value::ValueType;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: value assigned to `demo_mode` is never read
+   --> src\main.rs:111:9
+    |
+111 |         demo_mode = true;
+    |         ^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `server_handle`
+   --> src\main.rs:318:9
+    |
+318 |     let server_handle = tokio::spawn(async move {
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_server_handle`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `metamorphic_engine` (bin "metamorphic") generated 4 warnings (run `cargo fix --bin "metamorphic" -p 
+metamorphic_engine` to apply 3 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.51s

@@ -59,6 +59,18 @@ pub enum Instruction {
     },
     Jump { label: String },
     Return { value: Option<Box<Instruction>> },
+    /// Phase 1 of LLVM-format adoption: intra-module function calls,
+    /// scalar args/return only. No pointers — args are evaluated as
+    /// ordinary scalar Instruction trees, matched positionally against the
+    /// callee's parameter list (see llvm_frontend.rs's existing param-baking
+    /// convention, just resolved per-call now instead of baked once at
+    /// parse time). Deliberately does NOT support calls to functions outside
+    /// this module (libc, allocator, etc.) — those still get rejected by the
+    /// parser rather than silently treated as no-ops.
+    Call {
+        function_name: String,
+        args: Vec<Box<Instruction>>,
+    },
 }
 
 impl Instruction {
@@ -99,6 +111,10 @@ impl Instruction {
                 } else {
                     "ret void".to_string()
                 }
+            }
+            Instruction::Call { function_name, args } => {
+                let args_str = args.iter().map(|a| a.display()).collect::<Vec<_>>().join(", ");
+                format!("call {}({})", function_name, args_str)
             }
         }
     }

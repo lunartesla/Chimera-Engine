@@ -45,6 +45,109 @@ pub struct SavedPipeline {
     fitness: f64,
 }
 
+/// Live-tunable knobs, previously hardcoded literals scattered through this
+/// file and neural_predictor.rs. Adjustable from the dashboard's Tuning tab
+/// over the WebSocket connection (see engine_server.rs's "set_tuning"
+/// handling) without needing a recompile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonTuning {
+    /// How many consecutive cycles a module can go without improving before
+    /// a strain gets forked to explore it independently. Was a literal `3`
+    /// inside should_fork_strain.
+    pub stuck_cycles_before_fork: i32,
+    /// Generations run per evolve() call, both for the origin population
+    /// each main-loop cycle and for each strain's background-thread burst.
+    /// Was a literal `100` repeated at every evolve() call site.
+    pub evolve_batch_size: u32,
+    /// Accepted-mutation records the NEAT predictor needs before it's
+    /// considered "ready" / before confidence reaches 1.0. Was the
+    /// compile-time NM_READY_THRESHOLD const in neural_predictor.rs.
+    pub nm_ready_threshold: usize,
+    /// Safety cap on total generations a single strain's background thread
+    /// will run before giving up if it never gets promoted. Was a literal
+    /// `5000` inside fork_strain's spawned closure.
+    pub strain_generation_cap: i32,
+}
+
+impl Default for DaemonTuning {
+    fn default() -> Self {
+        Self {
+            stuck_cycles_before_fork: 3,
+            evolve_batch_size: 100,
+            nm_ready_threshold: 500,
+            strain_generation_cap: 5000,
+        }
+    }
+}
+
+/// Snapshot of one active strain for the dashboard's Strains tab.
+/// "specialty" = the module it was forked to work on (mod_name) — task_class
+/// is the goal id, not a human-meaningful specialty, so we report mod_name
+/// under that name for the UI instead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrainSnapshot {
+    pub id: String,
+    pub specialty: String,
+    pub fitness: f64,
+    pub generations: i32,
+    #[serde(rename = "gateLevel")]
+    pub gate_level: u8,
+    #[serde(rename = "nmRecords")]
+    pub nm_records: usize,
+    #[serde(rename = "nmConfidence")]
+    pub nm_confidence: f64,
+    #[serde(rename = "nmReady")]
+    pub nm_ready: bool,
+    #[serde(rename = "forkTimestamp")]
+    pub fork_timestamp: String,
+    #[serde(rename = "taskClass")]
+    pub task_class: String,
+}
+
+/// Gate level (0-3) mirroring StrainEngine::should_promote()'s gates plus
+/// check_promotions()'s stability gate, so the dashboard can show exactly
+/// how close a strain is to promotion instead of a flat "active" status.
+fn strain_gate_level(strain: &ActiveStrain) -> u8 {
+    let lineage = strain.engine.get_lineage();
+    if lineage.generations_run < 500 {
+        return 0;
+    }
+    let predictor = strain.engine.get_engine().get_predictor();
+    if !(predictor.is_nm_ready() && predictor.get_nm_confidence() >= 0.85) {
+        return 1;
+    }
+    let history = strain.engine.get_engine().get_fitness_history();
+    if history.len() >= 50 {
+        let last_50: Vec<f64> = history.iter().rev().take(50).copied().collect();
+        let mean: f64 = last_50.iter().sum::<f64>() / last_50.len() as f64;
+        let variance: f64 = last_50.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / last_50.len() as f64;
+        // Mirrors check_promotions()'s real gate exactly, including the
+        // fitness > 0.0 sanity floor — flat-but-bad must never show as
+        // "ready for promotion" on the dashboard either.
+        if variance < 0.01 && strain.engine.get_best_fitness() > 0.0 {
+            return 3;
+        }
+    }
+    2
+}
+
+fn strain_snapshot(strain: &ActiveStrain) -> StrainSnapshot {
+    let lineage = strain.engine.get_lineage();
+    let predictor = strain.engine.get_engine().get_predictor();
+    StrainSnapshot {
+        id: lineage.strain_id.clone(),
+        specialty: lineage.mod_name.clone(),
+        fitness: strain.engine.get_best_fitness(),
+        generations: lineage.generations_run,
+        gate_level: strain_gate_level(strain),
+        nm_records: predictor.training_data_len(),
+        nm_confidence: predictor.get_nm_confidence(),
+        nm_ready: predictor.is_nm_ready(),
+        fork_timestamp: lineage.fork_timestamp.clone(),
+        task_class: lineage.task_class.clone(),
+    }
+}
+
 pub struct ActiveStrain {
     opt_engine: OptimizationEngine,
     pub engine: StrainEngine,
@@ -78,6 +181,7 @@ pub struct EvolutionDaemon {
 
     strains: Arc<Mutex<Vec<ActiveStrain>>>,
     next_strain_id: i32,
+    tuning: Arc<Mutex<DaemonTuning>>,
 
     terminal_chat: TerminalChat,
     engine_server: crate::engine_server::EngineServer,
@@ -119,6 +223,7 @@ impl EvolutionDaemon {
             pass_registry: PassRegistry::new(),
             strains: Arc::new(Mutex::new(Vec::new())),
             next_strain_id: 1,
+            tuning: Arc::new(Mutex::new(DaemonTuning::default())),
 
             terminal_chat: TerminalChat::new(),
             engine_server,
@@ -135,6 +240,10 @@ impl EvolutionDaemon {
         let handle = server.clone_handle();
         self.engine_server = server;
         self.server_handle = handle;
+    }
+
+    pub fn set_tuning(&mut self, tuning: Arc<Mutex<DaemonTuning>>) {
+        self.tuning = tuning;
     }
 
     pub fn run(&mut self) {
@@ -215,7 +324,25 @@ impl EvolutionDaemon {
             eng.optimize_hot_paths().expect("Failed to optimize hot paths");
 
             let mut se = SelfEvolvingEngine::new(eng, OptimizationLevel::Conservative, &format!("daemon_se_{}", mod_name));
+            // Correctness gate target: score_pipeline() validates every scored
+            // pipeline against this function name. Was previously left at the
+            // hardcoded default "main", which silently never matched any of
+            // our actual module names — meaning the correctness check inside
+            // score_pipeline would always report "Function not found" and
+            // reject EVERY pipeline as incorrect once wired in, unless we set
+            // this to the real entry function for this specific module.
+            if let Some(first_func) = current_module.functions.first() {
+                se.set_validation_target_func(&first_func.name);
+            }
             se.set_external_stop_flag(Arc::clone(&self.stopped));
+            // Sync the dashboard-tunable NM ready threshold into the shared
+            // predictor before cloning it out to se — clone_state() carries
+            // whatever threshold persistent_predictor currently has.
+            {
+                let mut pp = self.persistent_predictor.lock().unwrap();
+                let threshold = self.tuning.lock().unwrap().nm_ready_threshold;
+                pp.set_nm_ready_threshold(threshold);
+            }
             se.set_external_predictor(self.persistent_predictor.lock().unwrap().clone_state());
             // Blueprint replay
             let module_for_hash = se.base_engine().get_module().expect("Module not available for shape hash");
@@ -228,6 +355,8 @@ impl EvolutionDaemon {
 
             self.seed_population(&mut se, &mod_name);
 
+            let evolve_batch = self.tuning.lock().unwrap().evolve_batch_size;
+
             // Evolve
             let new_fitness;
             if let Some(goal) = &self.active_goal {
@@ -237,10 +366,10 @@ impl EvolutionDaemon {
                     info!("[BlackWall] ★ GOAL REACHED for '{}'!", mod_name);
                 }
             } else {
-                se.evolve(100, self.wildcard_mode);
+                se.evolve(evolve_batch, self.wildcard_mode);
                 new_fitness = se.get_best_fitness();
             }
-            self.total_gens += 100;
+            self.total_gens += evolve_batch as i64;
 
             // Sync trained state back into the daemon's persistent predictor.
             // set_external_predictor() only copies state INTO se — every accepted
@@ -261,6 +390,18 @@ impl EvolutionDaemon {
             // Check for strain promotions
             if self.total_gens % 500 == 0 {
                 self.check_promotions();
+            }
+
+            // Push current strain state to the dashboard's Strains tab every
+            // cycle — push-only, same pattern as fitness_update/neat_update,
+            // no request/reply needed.
+            {
+                let strains_guard = self.strains.lock().unwrap();
+                let snapshots: Vec<StrainSnapshot> = strains_guard.iter()
+                    .filter(|s| s.active)
+                    .map(strain_snapshot)
+                    .collect();
+                self.server_handle.broadcast_strain_update(&snapshots);
             }
 
             // Stuck tracking
@@ -500,9 +641,10 @@ impl EvolutionDaemon {
     }
 
     fn should_fork_strain(&self, mod_name: &str, se_engine: &SelfEvolvingEngine) -> bool {
-        // Gate 1: Module stuck >= 3 cycles
+        // Gate 1: Module stuck >= configured threshold (default 3, dashboard-tunable)
         let stuck_count = *self.stuck_cycles.get(mod_name).unwrap_or(&0);
-        if stuck_count < 3 { return false; }
+        let threshold = self.tuning.lock().unwrap().stuck_cycles_before_fork;
+        if stuck_count < threshold { return false; }
 
         // Gate 2: No existing active strain for this task class already running
         let task_class = self.active_goal.as_ref().map_or("free_evolution".to_string(), |g| g.id.clone());
@@ -520,16 +662,15 @@ impl EvolutionDaemon {
         info!("[BlackWall] Forking new strain: {} for task: {} (module: {})",
             strain_id, task_class, mod_name);
 
-        let target_mod = self.library.iter().find(|m| m.name == mod_name)
-            .expect("Module not found in library for strain fork").clone();
-
-        let mut opt_engine = OptimizationEngine::new(OptimizationLevel::Conservative);
-        opt_engine.load_module(target_mod.clone());
-        if let Some(first_func) = target_mod.functions.first() {
-            opt_engine.profile(&first_func.name).expect("Failed to profile for strain engine");
-            opt_engine.identify_hot_paths(1);
-        }
-        opt_engine.optimize_hot_paths().expect("Failed to optimize for strain engine");
+        // Reuse the origin's already-prepared engine (module loaded, profiled,
+        // hot paths optimized) instead of redoing all of that from scratch.
+        // Forking a strain is supposed to branch the NEAT brain to explore a
+        // task-specific direction — the module/profile/pass-registry state is
+        // identical to origin's at fork time regardless, so rebuilding it via
+        // OptimizationEngine::new + load_module + profile + identify_hot_paths
+        // + optimize_hot_paths was pure repeated work for the same result.
+        // What should actually diverge per strain is the predictor.
+        let opt_engine = origin_se.base_engine().clone();
         let opt_engine_for_active = opt_engine.clone(); // clone before move
 
         let mut strain_se = SelfEvolvingEngine::new(
@@ -538,7 +679,10 @@ impl EvolutionDaemon {
             &strain_id,
         );
         strain_se.set_external_stop_flag(Arc::clone(&self.stopped));
-        // Inject persistent predictor
+        // Fork the brain: start from the persistent predictor's current
+        // learned state, then this strain trains its own independent copy
+        // from here on — origin's predictor is untouched until/unless this
+        // strain gets promoted.
         strain_se.set_external_predictor(self.persistent_predictor.lock().unwrap().clone_state());
 
         let mut strain_engine = StrainEngine::new(
@@ -547,6 +691,7 @@ impl EvolutionDaemon {
             "origin",
             0,
             task_class,
+            mod_name,
             origin_se.get_best_fitness(),
         );
 
@@ -559,20 +704,79 @@ impl EvolutionDaemon {
             active: true,
         });
 
-        // Start the strain in a separate thread
-        // The prompt says `tokio::spawn` but we're in a blocking `run()` loop.
-        // For now, `std::thread` is fine.
+        // Start the strain in a separate thread. Looks itself up by strain_id
+        // on every burst rather than capturing a fixed vec index — check_promotions()
+        // calls Vec::remove() on promotion, which shifts every later index down by
+        // one, so a fixed-index thread would silently start operating on a
+        // *different* strain (or panic on out-of-bounds) the moment any earlier
+        // strain got promoted/removed while this one was still running.
+        //
+        // Also: this previously ran exactly ONE evolve(100) burst and then the
+        // thread exited for good — meaning a strain could never accumulate the
+        // 500 generations should_promote() gates on, or the ~500 recorded
+        // outcomes is_nm_ready()/get_nm_confidence() need. "Persistent strain"
+        // wasn't persistent; it ran once and sat inert in the vec forever.
+        // Now it loops in 100-generation bursts until promoted, removed
+        // (stale lookup fails), externally stopped, or a generous safety cap
+        // is hit so a forgotten strain can't run unbounded forever.
         let stopped_flag = Arc::clone(&self.stopped);
-        let strain_idx = strains_guard.len() - 1;
         let strains_arc_clone = Arc::clone(&self.strains);
+        let strain_id_for_thread = strain_id.clone();
+        let tuning_for_thread = Arc::clone(&self.tuning);
+        let server_handle_for_thread = self.server_handle.clone();
 
         std::thread::spawn(move || {
-            let mut locked_strains = strains_arc_clone.lock().unwrap();
-            let active_strain = &mut locked_strains[strain_idx];
-            active_strain.engine.set_external_stop_flag(stopped_flag);
-            active_strain.engine.evolve(100, false); // Run 100 generations
-            active_strain.generations_run += 100;
-            info!("[Strain] {} completed. Fitness: {}", active_strain.engine.get_lineage().strain_id, active_strain.engine.get_best_fitness());
+            {
+                let mut locked = strains_arc_clone.lock().unwrap();
+                if let Some(s) = locked.iter_mut().find(|s| s.engine.get_lineage().strain_id == strain_id_for_thread) {
+                    s.engine.set_external_stop_flag(Arc::clone(&stopped_flag));
+                }
+            }
+
+            loop {
+                if stopped_flag.load(Ordering::Relaxed) {
+                    info!("[Strain] {} stopped externally", strain_id_for_thread);
+                    break;
+                }
+
+                let (batch, gen_cap) = {
+                    let t = tuning_for_thread.lock().unwrap();
+                    (t.evolve_batch_size, t.strain_generation_cap)
+                };
+
+                let mut locked = strains_arc_clone.lock().unwrap();
+                let Some(s) = locked.iter_mut().find(|s| s.engine.get_lineage().strain_id == strain_id_for_thread) else {
+                    // Removed (promoted, or otherwise pruned) — nothing left to do.
+                    break;
+                };
+                if !s.active {
+                    break;
+                }
+
+                s.engine.evolve(batch, false);
+                s.generations_run += batch as i32;
+                let gens_run = s.engine.get_lineage().generations_run;
+                let fitness = s.engine.get_best_fitness();
+
+                // Broadcast the full active-strain list (not just this one)
+                // so the dashboard sees a live update right after this burst
+                // instead of waiting for the next main-loop cycle.
+                let snapshots: Vec<StrainSnapshot> = locked.iter()
+                    .filter(|s| s.active)
+                    .map(strain_snapshot)
+                    .collect();
+                drop(locked);
+                server_handle_for_thread.broadcast_strain_update(&snapshots);
+
+                info!("[Strain] {} burst complete: generations_run={} fitness={}",
+                    strain_id_for_thread, gens_run, fitness);
+
+                if gens_run >= gen_cap {
+                    info!("[Strain] {} hit generation cap ({}) without promotion — stopping",
+                        strain_id_for_thread, gen_cap);
+                    break;
+                }
+            }
         });
 
         info!("[BlackWall] Strain {} started in parallel thread", strain_id);
@@ -605,8 +809,21 @@ impl EvolutionDaemon {
                         let mean: f64 = last_50_fitnesses.iter().sum::<f64>() / last_50_fitnesses.len() as f64;
                         let variance: f64 = last_50_fitnesses.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / last_50_fitnesses.len() as f64;
 
-                        if variance < 0.01 { // Variance threshold
-                            info!("[BlackWall] Strain {} is ready for promotion (Gate 3 passed: variance={})", strain.engine.get_lineage().strain_id, variance);
+                        if variance < 0.01 && strain.engine.get_best_fitness() > 0.0 {
+                            // The variance check alone says "the value stopped
+                            // changing" — it says nothing about whether that
+                            // value is good. A strain whose entire population
+                            // fails the correctness validator identically every
+                            // generation, or one whose pipelines have converged
+                            // on a degenerate bloat (e.g. stacked loop_unroll
+                            // blowing a function up by orders of magnitude),
+                            // is exactly as "stable" by variance alone as one
+                            // that converged on a real improvement. Since
+                            // fitness = baseline_instrs - current_instrs,
+                            // requiring > 0.0 means "this pipeline genuinely
+                            // shrank the program" — both failure modes above
+                            // land deep in negative territory and get excluded.
+                            info!("[BlackWall] Strain {} is ready for promotion (Gate 3 passed: variance={}, fitness={})", strain.engine.get_lineage().strain_id, variance, strain.engine.get_best_fitness());
                             promoted_strain_idx = Some(idx);
                             break;
                         }
@@ -626,7 +843,12 @@ impl EvolutionDaemon {
             // and making it the new default for the relevant module.
             let best_pipeline_from_strain = promoted_strain.engine.get_best_pipeline().to_vec();
             let best_fitness_from_strain = promoted_strain.engine.get_best_fitness();
-            let mod_name = promoted_strain.engine.get_lineage().task_class.clone(); // Assuming task_class maps to module name
+            // mod_name, not task_class — task_class is the GOAL id (e.g.
+            // "free_evolution"), so using it here silently misfiled every
+            // promoted result under a goal-id key that's never read back by
+            // anything keyed on actual module names (best_fitness_map,
+            // saved_pipelines), making promotion a no-op in practice.
+            let mod_name = promoted_strain.engine.get_lineage().mod_name.clone();
 
             // Update daemon's best pipeline
             self.best_fitness_map.insert(mod_name.clone(), best_fitness_from_strain);
@@ -638,6 +860,14 @@ impl EvolutionDaemon {
                 fitness: best_fitness_from_strain,
             };
             self.saved_pipelines.insert(mod_name.clone(), sp);
+
+            // promote() saves the strain's trained predictor into origin_se —
+            // but origin_se is a throwaway local, so without this it gets
+            // dropped right here and the whole point of promotion (folding
+            // the strain's learned NEAT weights back into the persistent
+            // predictor everything else reads) silently never happened.
+            *self.persistent_predictor.lock().unwrap() = origin_se.get_predictor().clone_state();
+
             self.save_state();
 
             info!("[BlackWall] Strain {} successfully promoted! New best for '{}': fitness={}",

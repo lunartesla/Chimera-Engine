@@ -46,7 +46,7 @@ impl Validator {
             };
         }
 
-        let failures = self.run_randomized_validation(orig_func.unwrap(), opt_func.unwrap(), runs);
+        let failures = self.run_randomized_validation(original, optimized, orig_func.unwrap(), opt_func.unwrap(), runs);
         let corruption_prob = if runs > 0 {
             ((failures as f64 / runs as f64) * 100.0) as i32
         } else {
@@ -68,6 +68,8 @@ impl Validator {
 
     pub fn run_randomized_validation(
         &self,
+        original: &Module,
+        optimized: &Module,
         orig_func: &Function,
         opt_func: &Function,
         runs: u32,
@@ -85,11 +87,15 @@ impl Validator {
             let args: HashMap<String, i64> = HashMap::new(); // Placeholder for actual args
 
             let orig_result = self.interpreter.execute_function(
+                original,
                 orig_func,
+                &[],
                 Some(&mut orig_profiler),
             );
             let opt_result = self.interpreter.execute_function(
+                optimized,
                 opt_func,
+                &[],
                 Some(&mut opt_profiler),
             );
 

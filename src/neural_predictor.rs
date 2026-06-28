@@ -42,6 +42,11 @@ pub struct NeuralPredictor {
     outcome_buffer:       Vec<OutcomeRecord>,
     records_since_evolve: usize,
     total_records:        usize,
+    // Was a compile-time const (NM_READY_THRESHOLD). Now a runtime field so
+    // the dashboard's tuning panel can adjust it live instead of requiring
+    // a recompile to change how much training the brain needs before it's
+    // trusted for predictions.
+    nm_ready_threshold:   usize,
 }
 
 impl NeuralPredictor {
@@ -74,15 +79,24 @@ impl NeuralPredictor {
             outcome_buffer:       Vec::with_capacity(OUTCOME_BUFFER_MAX),
             records_since_evolve: 0,
             total_records:        0,
+            nm_ready_threshold:   NM_READY_THRESHOLD,
         }
     }
 
     pub fn is_nm_ready(&self) -> bool {
-        self.total_records >= NM_READY_THRESHOLD
+        self.total_records >= self.nm_ready_threshold
     }
 
     pub fn get_nm_confidence(&self) -> f64 {
-        (self.total_records as f64 / NM_READY_THRESHOLD as f64).min(1.0)
+        (self.total_records as f64 / self.nm_ready_threshold.max(1) as f64).min(1.0)
+    }
+
+    pub fn get_nm_ready_threshold(&self) -> usize {
+        self.nm_ready_threshold
+    }
+
+    pub fn set_nm_ready_threshold(&mut self, threshold: usize) {
+        self.nm_ready_threshold = threshold.max(1);
     }
 
     pub fn get_status_string(&self) -> String {
@@ -249,6 +263,7 @@ impl NeuralPredictor {
         let mut p = Self::new();
         p.outcome_buffer = self.outcome_buffer.clone();
         p.total_records  = self.total_records;
+        p.nm_ready_threshold = self.nm_ready_threshold;
         p
     }
 

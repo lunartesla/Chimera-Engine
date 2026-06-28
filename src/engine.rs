@@ -60,7 +60,14 @@ impl OptimizationEngine {
             profiler: RuntimeProfiler::new(),
             validator: Validator::new(),
             opt_level,
-            validation_runs: 10,
+            // run_randomized_validation doesn't actually vary inputs between
+            // runs (this IR's functions take no real call-time arguments —
+            // see llvm_frontend.rs), so every one of the 10 "runs" executes
+            // the exact same deterministic comparison and produces an
+            // identical result. 10x was pure wasted interpretation plus 10x
+            // duplicate eprintln spam for zero extra signal; 1 carries the
+            // same information.
+            validation_runs: 1,
             hot_functions: Vec::new(),
         }
     }
@@ -89,7 +96,7 @@ impl OptimizationEngine {
         let func_clone = func.clone();
 
         self.profiler.start_function(func_name);
-        let _ = self.validator.interpreter.execute_function(&func_clone, Some(&mut self.profiler)); // Note: Interpreter returns Result<i64, InterpreterError>
+        let _ = self.validator.interpreter.execute_function(working_module, &func_clone, &[], Some(&mut self.profiler)); // Note: Interpreter returns Result<i64, InterpreterError>
         self.profiler.end_function(func_name);
 
         Ok(())
@@ -124,10 +131,7 @@ impl OptimizationEngine {
     }
 
     pub fn validate_optimization(&self, func_name: &str) -> bool {
-        let original = self.original_module.as_ref().expect("Original module not loaded for validation");
-        let optimized = self.working_module.as_ref().expect("Working module not loaded for validation");
-
-        let result = self.validator.validate(original, optimized, func_name, self.validation_runs);
+        let result = self.validate_optimization_result(func_name);
 
         // C++ prints validation results, so should Rust.
         eprintln!("Validation result: {}", if result.passed { "PASSED" } else { "FAILED" });
@@ -139,6 +143,17 @@ impl OptimizationEngine {
         }
 
         result.passed
+    }
+
+    /// Same correctness check as `validate_optimization`, without the
+    /// eprintln! diagnostics. Needed because this now runs on every scored
+    /// pipeline, every generation (see SelfEvolvingEngine::score_pipeline) —
+    /// the printing version would spam thousands of lines per second.
+    pub fn validate_optimization_result(&self, func_name: &str) -> crate::validator::ValidationResult {
+        let original = self.original_module.as_ref().expect("Original module not loaded for validation");
+        let optimized = self.working_module.as_ref().expect("Working module not loaded for validation");
+
+        self.validator.validate(original, optimized, func_name, self.validation_runs)
     }
 
     pub fn get_module(&self) -> Option<&Module> {

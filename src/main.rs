@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Mutex;
 use log::{info, warn, error, LevelFilter};
 use env_logger::Builder;
-use anyhow::Result;
+use anyhow::{Result, Context, bail};
 use serde::Serialize;
 
 use metamorphic_engine::ir::module::Module;
@@ -23,6 +23,7 @@ use metamorphic_engine::evolution_daemon::EvolutionDaemon;
 use metamorphic_engine::engine_server::EngineServer;
 use metamorphic_engine::teacher::Teacher;
 use metamorphic_engine::ir_generator::IRGenerator;
+use metamorphic_engine::llvm_frontend;
 
 // score_pipeline() in self_evolving_engine.rs is allocation-heavy (clones whole
 // modules + builds PassManagers on every call, now happening in parallel across
@@ -61,6 +62,8 @@ async fn main() -> Result<()> {
     let mut wildcard_mode = false;
     let mut goal_name = "minimize_instrs".to_string();
     let mut target_file = String::new();
+    let mut target_arg: i64 = 10;
+    let mut target_fn: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -82,6 +85,18 @@ async fn main() -> Result<()> {
                     target_file = args[i].clone();
                 }
             }
+            "--target-arg" => {
+                i += 1;
+                if i < args.len() {
+                    target_arg = args[i].parse().unwrap_or(10);
+                }
+            }
+            "--target-fn" => {
+                i += 1;
+                if i < args.len() {
+                    target_fn = Some(args[i].clone());
+                }
+            }
             "--help" => {
                 print_help();
                 return Ok(());
@@ -96,17 +111,34 @@ async fn main() -> Result<()> {
         demo_mode = true;
     }
 
+    let target_spec = if target_mode {
+        Some(TargetSpec { path: target_file.clone(), param_value: target_arg, fn_filter: target_fn.clone() })
+    } else {
+        None
+    };
+
     if daemon_mode {
-        run_daemon(wildcard_mode, &goal_name).await?;
+        run_daemon(wildcard_mode, &goal_name, target_spec).await?;
     } else if generate_mode {
         run_generate_mode().await?;
     } else if target_mode {
-        run_target_mode(&target_file).await?;
+        // --target without --daemon: same real ingestion + same persistent
+        // daemon/dashboard infrastructure, just defaulting goal/wildcard.
+        // There's no reason to keep the old lighter-weight path around —
+        // it never started the EngineServer/dashboard and had no Ctrl-C
+        // handling, so it was strictly worse for actually watching a run.
+        run_daemon(false, &goal_name, target_spec).await?;
     } else {
         run_demo();
     }
 
     Ok(())
+}
+
+struct TargetSpec {
+    path: String,
+    param_value: i64,
+    fn_filter: Option<String>,
 }
 
 fn print_help() {
@@ -120,6 +152,15 @@ fn print_help() {
     println!("  --goal <name>     Set goal for daemon mode");
     println!("                     Options: minimize_instrs, minimize_time,");
     println!("                             token_comm, max_branch_elim");
+    println!("  --target <path>   Ingest a real program as the evolution target");
+    println!("                     (.c/.cpp/.cc/.cxx via clang, .rs via rustc, .ll direct,");
+    println!("                      .json for a serialized Module). Combine with --daemon");
+    println!("                     to run it through the full persistent daemon+dashboard.");
+    println!("  --target-arg <N>  Value baked in for the target function's parameter(s)");
+    println!("                     (default: 10). This IR has no Call instruction, so");
+    println!("                     parameters are baked as constants, not passed at runtime.");
+    println!("  --target-fn <name> Which function in the target file to ingest");
+    println!("                     (default: first function definition found)");
     println!("  --help            Show this help message");
     println!("\nEnvironment Variables:");
     println!("  OPENROUTER_API_KEY  API key for Teacher (LLM integration)");
@@ -166,7 +207,7 @@ fn run_demo() {
 
         let mut p1 = RuntimeProfiler::new();
         let i1 = Interpreter::new();
-        let orig = i1.execute_function(&test_mod.functions[0], Some(&mut p1)).expect("Original execution failed");
+        let orig = i1.execute_function(&test_mod, &test_mod.functions[0], &[], Some(&mut p1)).expect("Original execution failed");
 
         let mut test_eng = OptimizationEngine::new(OptimizationLevel::Conservative);
         test_eng.load_module(test_mod.clone());
@@ -176,7 +217,8 @@ fn run_demo() {
 
         let mut p2 = RuntimeProfiler::new();
         let i2 = Interpreter::new();
-        let opt = i2.execute_function(&test_eng.get_module().unwrap().functions[0], Some(&mut p2)).expect("Optimized execution failed");
+        let opt_module = test_eng.get_module().unwrap();
+        let opt = i2.execute_function(opt_module, &opt_module.functions[0], &[], Some(&mut p2)).expect("Optimized execution failed");
 
         let expected = n * (n - 1) / 2;
         info!("n={}: expected={} orig={} opt={} {}", n, expected, orig, opt, if orig == expected as i64 && opt == expected as i64 { "OK" } else { "FAIL" });
@@ -209,11 +251,14 @@ fn run_demo() {
     info!("\n=== Demo Complete ===");
 }
 
-async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
+async fn run_daemon(wildcard: bool, goal_name: &str, target: Option<TargetSpec>) -> Result<()> {
     println!("╔══════════════════════════════════════════════════╗");
     println!("║   Metamorphic Engine - Evolution Daemon          ║");
     if wildcard {
         println!("║   WILDCARD IR MUTATION MODE ENABLED              ║");
+    }
+    if target.is_some() {
+        println!("║   REAL TARGET INGESTION MODE                     ║");
     }
     println!("╚══════════════════════════════════════════════════╝\n");
 
@@ -221,24 +266,52 @@ async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
     let teacher = api_key.map(|_key| Teacher::new()); // Teacher needs to be constructed this way
     let teacher = Mutex::new(teacher);
 
-    let modules = vec![
-        module_builders::build_simple_sum(20),
-        module_builders::build_fib_loop(15),
-        module_builders::build_nested_loop(8),
-        module_builders::build_branch_heavy(16),
-        module_builders::build_entropy_loop(24),
-    ];
-    info!("Synthetic modules: {}", modules.len());
+    let all_modules: Vec<Module> = if let Some(spec) = &target {
+        let target_path = PathBuf::from(&spec.path);
+        if !target_path.exists() {
+            error!("[Target] File not found: {}", target_path.display());
+            bail!("target file not found: {}", target_path.display());
+        }
 
-    let uro_mods = module_builders::load_uroboros_library();
-    let mut all_modules = modules;
-    all_modules.extend(uro_mods);
-    info!("Total modules: {}", all_modules.len());
+        info!("[Target] Ingesting real program: {}", target_path.display());
+        let (module, ceiling) = llvm_frontend::load_target_module(
+            &target_path,
+            spec.param_value,
+            spec.fn_filter.as_deref(),
+        ).with_context(|| format!("failed to ingest target {}", target_path.display()))?;
+
+        let baseline = module.instruction_count();
+        info!("[Target] Loaded module '{}': {} function(s), {} instruction(s) baseline",
+            module.name, module.functions.len(), baseline);
+        info!("[Target] Theoretical fitness ceiling for this module: {:.4}", ceiling);
+        info!("[Target] (fitness = baseline_instrs - current_instrs: 0 = no improvement,");
+        info!("[Target]  POSITIVE = real improvement, negative = pipeline made it worse.");
+        info!("[Target]  Ceiling ({:.4}) = every instruction eliminated, current->0.)", ceiling);
+
+        vec![module]
+    } else {
+        let modules = vec![
+            module_builders::build_simple_sum(20),
+            module_builders::build_fib_loop(15),
+            module_builders::build_nested_loop(8),
+            module_builders::build_branch_heavy(16),
+            module_builders::build_entropy_loop(24),
+        ];
+        info!("Synthetic modules: {}", modules.len());
+
+        let uro_mods = module_builders::load_uroboros_library();
+        let mut all = modules;
+        all.extend(uro_mods);
+        info!("Total modules: {}", all.len());
+        all
+    };
 
     let daemon_teacher = teacher.into_inner().ok().flatten();
 
     // Create engine server with broadcast capability
-    let engine_server = EngineServer::new(9877);
+    let tuning = std::sync::Arc::new(Mutex::new(metamorphic_engine::evolution_daemon::DaemonTuning::default()));
+    let mut engine_server = EngineServer::new(9877);
+    engine_server.set_tuning(std::sync::Arc::clone(&tuning));
     let server_clone = engine_server.clone_handle();
 
     // Start the server in background
@@ -246,12 +319,16 @@ async fn run_daemon(wildcard: bool, goal_name: &str) -> Result<()> {
         let _ = server_clone.start().await;
     });
 
+    let state_file = if target.is_some() { "target_best_pipelines.json" } else { "daemon_best_pipelines.json" };
+
     let mut daemon = EvolutionDaemon::new(
         all_modules,
-        "daemon_best_pipelines.json",
+        state_file,
         wildcard,
         daemon_teacher
     );
+    daemon.set_tuning(std::sync::Arc::clone(&tuning));
+
 
     let goal = match goal_name {
         "minimize_instrs" => GoalDefinition::minimize_instructions(8),
@@ -370,78 +447,3 @@ async fn run_generate_mode() -> Result<()> {
     Ok(())
 }
 
-async fn run_target_mode(target_file: &str) -> Result<()> {
-    info!("Metamorphic Engine - Target Mode");
-    info!("==========================================\n");
-
-    let target_path = PathBuf::from(target_file);
-    if !target_path.exists() {
-        error!("[Target] File not found: {}", target_path.display());
-        return Ok(());
-    }
-
-    info!("[Target] Loading target: {}", target_path.display());
-    let mut target_module: Option<Module> = None;
-
-    let extension = target_path.extension().and_then(|s: &std::ffi::OsStr| s.to_str()).unwrap_or("");
-
-    if extension == "json" {
-        info!("[Target] Loading IR from JSON...");
-        if let Ok(_content) = fs::read_to_string(&target_path) {
-            // Simplified: create a module from JSON
-            // C++ also created a simplified module, full deserialization isn't done yet.
-            let mod_name = target_path.file_stem().and_then(|s: &std::ffi::OsStr| s.to_str()).unwrap_or("target").to_string();
-            let mut module = Module::new(mod_name);
-            module.functions.push(Function::new("main".to_string(), ValueType::Int));
-            target_module = Some(module);
-            info!("[Target] Loaded JSON module: {}", target_module.as_ref().unwrap().name);
-        } else {
-            error!("[Target] Failed to read JSON file");
-        }
-    } else if extension == "py" || extension == "cpp" {
-        info!("[Target] Sending {} file to h3 for IR translation...", extension);
-
-        let content = fs::read_to_string(&target_path)?;
-
-        let mut teacher = Teacher::new();
-        if !teacher.is_available() {
-            error!("[Target] Teacher not available. Cannot translate. Set OPENROUTER_API_KEY.");
-            return Ok(());
-        }
-
-        let system_prompt = "You are h3, an AI assistant for the Metamorphic Engine. \
-                             Translate the given code to IR (Intermediate Representation) description. \
-                             Describe the functions, basic blocks, and instructions needed.";
-
-        let response = teacher.chat(system_prompt, &format!("Translate this {} code to IR:\n{}", extension, content));
-
-        info!("[h3] Translation:\n{}", response.as_deref().unwrap_or("(no response)"));
-
-        // For now, create a simple module
-        let mut module = module_builders::build_simple_sum(20);
-        module.name = format!("target_{}", target_path.file_stem().and_then(|s: &std::ffi::OsStr| s.to_str()).unwrap_or("unknown"));
-        target_module = Some(module);
-    } else {
-        error!("[Target] Unsupported file type: {}", extension);
-        return Ok(());
-    }
-
-    let Some(modules) = target_module.map(|m| vec![m]) else {
-        error!("[Target] Failed to load target module");
-        return Ok(());
-    };
-
-    info!("\n[Target] Starting evolution of target module...");
-
-    let teacher = Teacher::new();
-
-    let mut daemon = EvolutionDaemon::new(
-        modules,
-        "target_best_pipelines.json",
-        false, // No wildcard for target mode
-        Some(teacher),
-    );
-    daemon.run();
-
-    Ok(())
-}

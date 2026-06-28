@@ -18,6 +18,7 @@ pub mod ir_generator;
 pub mod dashboard;
 pub mod teacher;
 pub mod neural_predictor;
+pub mod llvm_frontend;
 
 #[cfg(not(feature = "no-capi"))]
 pub mod capi;
@@ -40,6 +41,7 @@ pub use ir_generator::*;
 pub use dashboard::*;
 pub use teacher::*;
 pub use neural_predictor::*;
+pub use llvm_frontend::*;
 
 #[cfg(not(feature = "no-capi"))]
 pub use capi::*;

@@ -1,17 +1,19 @@
 import React from 'react';
-import { LayoutDashboard, Cpu } from 'lucide-react';
+import { LayoutDashboard, Cpu, GitBranch, SlidersHorizontal } from 'lucide-react';
 
 const TERRACOTTA = '#DA7756';
 const GREEN = '#81C784';
 const WARNING = '#F6A623';
 
 // Only tabs with REAL backing data from the engine's broadcast protocol.
-// Strains / Blueprints / Passes were removed — the engine never sends that
-// data (no broadcast_strain_update / broadcast_pass_frequency exist yet).
-// Add them back once the Rust side actually broadcasts them.
+// Strains and Tuning now have real broadcasts (strain_update / tuning_update)
+// — see useEngineSocket.js. Blueprints / Passes are still removed since the
+// engine doesn't broadcast those yet; add them back once it does.
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'neat', label: 'NEAT Brain', icon: Cpu },
+  { id: 'strains', label: 'Strains', icon: GitBranch },
+  { id: 'tuning', label: 'Tuning', icon: SlidersHorizontal },
 ];
 
 export default function Sidebar({ connected, neatReady, activeTab, setActiveTab }) {

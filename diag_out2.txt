@@ -1,0 +1,19 @@
+﻿cargo :    Compiling metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+At line:1 char:59
++ ... ngine\Rust'; cargo run --release --example diagnose_loop 2>&1 | Out-F ...
++                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling me...ry engine\Rust):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `release` profile [optimized] target(s) in 1m 12s
+     Running `target\release\examples\diagnose_loop.exe`
+Module 'target_test' fn 'compute_sum' baseline instrs: 9
+Testing 7 passes individually...
+
+[strength_reduction] changed=false instrs_after=9 -> passed=true details=
+[loop_unroll] changed=true instrs_after=12 -> passed=true details=
+[constant_propagation] changed=true instrs_after=9 -> passed=true details=
+[block_merge] changed=false instrs_after=9 -> passed=true details=
+[dead_code] changed=false instrs_after=9 -> passed=true details=
+[cse] changed=false instrs_after=9 -> passed=true details=
+[constant_folding] changed=false instrs_after=9 -> passed=true details=

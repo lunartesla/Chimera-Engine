@@ -16,12 +16,14 @@ use crate::passes::OptimizationLevel; // For creating SelfEvolvingEngine
 use crate::passes::PassManager;
 use crate::profiler::RuntimeProfiler;
 use crate::teacher::MutationStep; // From Teacher
+use crate::evolution_daemon::{DaemonTuning, StrainSnapshot};
 
 // --- Data structures for client communication ---
 
 pub async fn handle_ws_client(
     stream: TcpStream,
     broadcast_tx: broadcast::Sender<String>,
+    tuning: Arc<Mutex<DaemonTuning>>,
 ) {
     use tokio_tungstenite::tungstenite::Message;
     use futures_util::{StreamExt, SinkExt};
@@ -37,6 +39,15 @@ pub async fn handle_ws_client(
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
     let mut broadcast_rx = broadcast_tx.subscribe();
 
+    // New client doesn't know the current tuning values until either the
+    // next change broadcast or this — without it, a freshly opened Tuning
+    // tab would show nothing until someone else touches a slider.
+    {
+        let snapshot = tuning.lock().unwrap().clone();
+        let msg = serde_json::json!({ "type": "tuning_update", "tuning": snapshot });
+        let _ = ws_tx.send(Message::Text(msg.to_string())).await;
+    }
+
     // Forward broadcast events to this client
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = broadcast_rx.recv().await {
@@ -46,11 +57,33 @@ pub async fn handle_ws_client(
         }
     });
 
-    // Handle incoming messages (ping, subscribe commands)
+    // Handle incoming messages: currently only "set_tuning" needs to flow
+    // client -> server (sliders on the dashboard's Tuning tab). Everything
+    // else (fitness/neat/strain updates) is push-only from the daemon side.
     while let Some(Ok(msg)) = ws_rx.next().await {
         if let Message::Text(text) = msg {
-            // handle ping etc if needed
-            let _ = text;
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+            let action = parsed.get("action").and_then(|a| a.as_str()).unwrap_or("");
+            if action == "set_tuning" {
+                {
+                    let mut t = tuning.lock().unwrap();
+                    if let Some(v) = parsed.get("stuck_cycles_before_fork").and_then(|v| v.as_i64()) {
+                        t.stuck_cycles_before_fork = v.clamp(1, 50) as i32;
+                    }
+                    if let Some(v) = parsed.get("evolve_batch_size").and_then(|v| v.as_u64()) {
+                        t.evolve_batch_size = v.clamp(1, 5000) as u32;
+                    }
+                    if let Some(v) = parsed.get("nm_ready_threshold").and_then(|v| v.as_u64()) {
+                        t.nm_ready_threshold = v.clamp(1, 100000) as usize;
+                    }
+                    if let Some(v) = parsed.get("strain_generation_cap").and_then(|v| v.as_i64()) {
+                        t.strain_generation_cap = v.clamp(100, 1_000_000) as i32;
+                    }
+                }
+                let snapshot = tuning.lock().unwrap().clone();
+                let msg = serde_json::json!({ "type": "tuning_update", "tuning": snapshot });
+                let _ = broadcast_tx.send(msg.to_string());
+            }
         }
     }
 
@@ -124,6 +157,7 @@ pub struct EngineServer {
     daemon: Arc<Mutex<Option<EvolutionDaemon>>>, // Optional reference to the daemon
     sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
     broadcast_tx: broadcast::Sender<String>,
+    tuning: Arc<Mutex<DaemonTuning>>,
     // The C++ version creates a new OptimizationEngine per client session
     // and also has a global daemon reference.
 }
@@ -137,7 +171,16 @@ impl EngineServer {
             daemon: Arc::new(Mutex::new(None)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             broadcast_tx,
+            tuning: Arc::new(Mutex::new(DaemonTuning::default())),
         }
+    }
+
+    /// Share the daemon's tuning state with this server so dashboard clients
+    /// can read/adjust it over the WebSocket connection. Call this BEFORE
+    /// clone_handle() / start() — the listener task only sees whatever
+    /// tuning Arc was set at the point its ServerHandle was cloned.
+    pub fn set_tuning(&mut self, tuning: Arc<Mutex<DaemonTuning>>) {
+        self.tuning = tuning;
     }
 
     /// Get a handle to the broadcast sender for use by the daemon
@@ -153,6 +196,7 @@ impl EngineServer {
             broadcast_tx: self.broadcast_tx.clone(),
             sessions: Arc::clone(&self.sessions),
             daemon: Arc::clone(&self.daemon),
+            tuning: Arc::clone(&self.tuning),
         }
     }
 }
@@ -165,6 +209,7 @@ pub struct ServerHandle {
     broadcast_tx: broadcast::Sender<String>,
     sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
     daemon: Arc<Mutex<Option<EvolutionDaemon>>>,
+    tuning: Arc<Mutex<DaemonTuning>>,
 }
 
 impl ServerHandle {
@@ -208,6 +253,14 @@ impl ServerHandle {
         let _ = self.broadcast_tx.send(msg.to_string());
     }
 
+    pub fn broadcast_strain_update(&self, strains: &[StrainSnapshot]) {
+        let msg = serde_json::json!({
+            "type": "strain_update",
+            "strains": strains,
+        });
+        let _ = self.broadcast_tx.send(msg.to_string());
+    }
+
     pub fn broadcast_log(&self, level: &str, message: &str) {
         let msg = serde_json::json!({
             "type": "log",
@@ -241,8 +294,9 @@ impl ServerHandle {
                                         // WebSocket connection
                                         info!("[EngineServer] WebSocket client connected: {}", addr);
                                         let broadcast_tx = self.broadcast_tx.clone();
+                                        let tuning = Arc::clone(&self.tuning);
                                         tokio::spawn(async move {
-                                            handle_ws_client(stream, broadcast_tx).await;
+                                            handle_ws_client(stream, broadcast_tx, tuning).await;
                                         });
                                     } else {
                                         // Regular TCP client
@@ -645,7 +699,7 @@ impl ServerHandle {
         if let Some(module) = session.opt_engine.get_module() {
             if let Some(func) = module.functions.first() {
                 let mut profiler = RuntimeProfiler::new();
-                match session.opt_engine.validator().interpreter.execute_function(func, Some(&mut profiler)) {
+                match session.opt_engine.validator().interpreter.execute_function(module, func, &[], Some(&mut profiler)) {
                     Ok(val) => fitness = val as f64,
                     Err(e) => {
                         warn!("Error executing function for fitness calculation: {:?}", e);

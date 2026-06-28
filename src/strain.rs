@@ -14,6 +14,11 @@ pub struct StrainLineage {
     pub parent_id: String,        // "origin" for first gen
     pub generation: i32,          // 0 = original, 1 = first fork, etc.
     pub task_class: String,       // what task triggered the fork
+    pub mod_name: String,         // which module in the library this strain forked from —
+                                   // task_class is the GOAL id (e.g. "free_evolution"), not
+                                   // the module name; conflating the two silently misfiled
+                                   // every promoted result under the wrong key (see
+                                   // EvolutionDaemon::check_promotions).
     pub fork_timestamp: String,
     pub fitness_at_fork: f64,
     pub generations_run: i32,
@@ -45,6 +50,7 @@ impl StrainEngine {
         parent_id: &str,
         generation: i32,
         task_class: &str,
+        mod_name: &str,
         fitness_at_fork: f64,
     ) -> Self {
         let now = SystemTime::now();
@@ -58,6 +64,7 @@ impl StrainEngine {
                 parent_id: parent_id.to_string(),
                 generation,
                 task_class: task_class.to_string(),
+                mod_name: mod_name.to_string(),
                 fork_timestamp,
                 fitness_at_fork,
                 generations_run: 0,

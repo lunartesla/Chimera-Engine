@@ -76,15 +76,44 @@ impl Pass for ConstantPropagationPass {
 
         for _ in 0..max_iterations {
             let mut changed_this_iter = false;
-            let mut var_to_const: HashMap<String, i64> = HashMap::new();
 
-            // First pass: collect all stores that store constants directly
+            // Count every store to each variable, anywhere in the function,
+            // regardless of value. A variable is only a safe global constant
+            // if it is written EXACTLY ONCE in the whole function — anything
+            // written more than once (the overwhelmingly common case being a
+            // loop induction variable or accumulator: initialized once,
+            // reassigned every iteration) must never be globally substituted,
+            // because the substitution doesn't know about control flow.
+            //
+            // The previous version recorded a var as constant the moment it
+            // saw ANY `Store{var, Constant}` instruction anywhere — so
+            // `i = 0` in the entry block got treated as "i is always 0" and
+            // substituted into the loop condition `i < n` as well, turning
+            // it into a control-flow-blind `0 < n` that never reflects the
+            // real runtime value of i. For a loop guarded on i, that's an
+            // infinite loop, not a missed optimization — caught by the
+            // engine's correctness validator the first time it was wired
+            // into the evolutionary scoring path.
+            let mut store_count: HashMap<String, u32> = HashMap::new();
+            for func in &module.functions {
+                for bb in &func.basic_blocks {
+                    for instr in &bb.instructions {
+                        if let Instruction::Store { var_name, .. } = instr {
+                            *store_count.entry(var_name.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            let mut var_to_const: HashMap<String, i64> = HashMap::new();
             for func in &module.functions {
                 for bb in &func.basic_blocks {
                     for instr in &bb.instructions {
                         if let Instruction::Store { var_name, value } = instr {
-                            if let Instruction::Constant { value: const_val } = &**value {
-                                var_to_const.insert(var_name.clone(), *const_val);
+                            if store_count.get(var_name) == Some(&1) {
+                                if let Instruction::Constant { value: const_val } = &**value {
+                                    var_to_const.insert(var_name.clone(), *const_val);
+                                }
                             }
                         }
                     }

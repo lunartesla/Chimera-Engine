@@ -1,0 +1,69 @@
+{
+  "target_test": {
+    "pass_ids": [
+      "block_merge",
+      "loop_unroll",
+      "loop_unroll",
+      "cse",
+      "constant_folding",
+      "cse",
+      "constant_propagation",
+      "cse",
+      "dead_code",
+      "block_merge",
+      "strength_reduction",
+      "strength_reduction",
+      "block_merge",
+      "loop_unroll",
+      "constant_folding",
+      "constant_propagation",
+      "constant_propagation",
+      "loop_unroll"
+    ],
+    "params": [
+      {
+        "max_iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {
+        "iterations": 5
+      },
+      {},
+      {
+        "max_iterations": 10
+      },
+      {},
+      {},
+      {
+        "max_iterations": 5
+      },
+      {},
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "factor": 2
+      }
+    ],
+    "fitness": 1.0
+  }
+}

@@ -31,6 +31,7 @@ tokio-tungstenite = "0.21"
 futures-util = "0.3"
 rayon         = "1"
 mimalloc      = "0.1"
+regex         = "1"
 
 [dev-dependencies]
 proptest  = "1"

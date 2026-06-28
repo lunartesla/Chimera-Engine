@@ -127,6 +127,10 @@ impl SelfEvolvingEngine {
         self.neural_predictor = predictor;
     }
 
+    pub fn set_validation_target_func(&mut self, name: &str) {
+        self.validation_target_func = name.to_string();
+    }
+
     pub fn get_predictor(&self) -> &NeuralPredictor {
         &self.neural_predictor
     }
@@ -643,9 +647,38 @@ impl SelfEvolvingEngine {
         let current_module = temp_engine.get_module().expect("Module not available after scoring pipeline");
         let stats = self.compute_function_stats(current_module);
 
-        // Fitness formula: -(0.6 * inst_count + 0.4 * 1.0 * baseline_inst_count)
-        let fitness = -(0.6 * stats.instruction_count as f64
-                      + 0.4 * 1.0 * self.baseline_instruction_count as f64);
+        // Fitness = instructions eliminated vs this module's own unmodified
+        // baseline (baseline_instruction_count - current_instruction_count).
+        // 0.0 = no change from the original module, POSITIVE = real
+        // improvement (the moment any instruction is eliminated, fitness
+        // crosses into positive territory), negative = pipeline made it
+        // worse. Ceiling is exactly baseline_instruction_count (current->0).
+        //
+        // The old formula -(0.6*current + 0.4*baseline) had a dead
+        // baseline*0.4 term: baseline is constant for a given module load,
+        // so that term never changes during evolution — it's pure offset,
+        // not signal, and it's what pinned every module's ceiling at a
+        // module-size-dependent negative number instead of a clean,
+        // consistent "0 = no improvement" baseline.
+        let instruction_fitness = self.baseline_instruction_count as f64 - stats.instruction_count as f64;
+
+        // Correctness gate. This was the actual hole, not the formula above —
+        // score_pipeline previously never checked whether a pipeline still
+        // computes the same thing as the original module, so a pipeline that
+        // deleted instructions in a way that broke the program would have
+        // scored BETTER than a correct one, every generation, for the entire
+        // lifetime of this engine (including whatever the NEAT predictor has
+        // already learned from). A broken pipeline is now always worse than
+        // any correct one regardless of instruction count, full stop — the
+        // small instruction_fitness term tacked on only exists so multiple
+        // broken pipelines can still be ranked against each other instead of
+        // all tying at one flat value.
+        let validation = temp_engine.validate_optimization_result(&self.validation_target_func);
+        let fitness = if validation.passed {
+            instruction_fitness
+        } else {
+            -1.0e6 + instruction_fitness * 0.001
+        };
 
         PipelineScoreResult {
             fitness,
