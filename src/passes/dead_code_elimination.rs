@@ -43,6 +43,18 @@ impl DeadCodeEliminationPass {
                     Self::collect_used_vars(arg, used);
                 }
             }
+            Instruction::AllocaArray { .. } => {}
+            Instruction::GetElementPtr { base, index } => {
+                Self::collect_used_vars(base, used);
+                Self::collect_used_vars(index, used);
+            }
+            Instruction::LoadPtr { ptr } => {
+                Self::collect_used_vars(ptr, used);
+            }
+            Instruction::StorePtr { ptr, value } => {
+                Self::collect_used_vars(ptr, used);
+                Self::collect_used_vars(value, used);
+            }
         }
     }
 }

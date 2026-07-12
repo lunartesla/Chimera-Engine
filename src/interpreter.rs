@@ -13,6 +13,13 @@ use thiserror::Error;
 /// pipeline score, so this cap is load-bearing, not a nice-to-have.
 const MAX_CALL_DEPTH: u32 = 256;
 
+/// Phase 2's heap is a flat Vec<i64> shared across the WHOLE call tree (not
+/// per-frame) — a pointer to caller-allocated memory passed into a callee
+/// must refer to the same underlying storage, not a copy. Capped so a
+/// runaway AllocaArray (e.g. inside a buggy unrolled loop) fails cleanly
+/// instead of exhausting host memory.
+const MAX_HEAP_SLOTS: usize = 1_000_000;
+
 #[derive(Debug, Error)]
 pub enum InterpreterError {
     #[error("Division by zero")]
@@ -31,6 +38,10 @@ pub enum InterpreterError {
     MissingTerminator(String),
     #[error("Too many iterations or recursion depth exceeded")]
     TooManyIterations,
+    #[error("Invalid memory access at address {0} (heap size {1})")]
+    InvalidMemoryAccess(i64, usize),
+    #[error("Heap allocation of {0} slots would exceed the {1}-slot cap")]
+    HeapExhausted(usize, usize),
 }
 
 #[derive(Clone)]
@@ -55,7 +66,8 @@ impl Interpreter {
         args: &[i64],
         mut profiler: Option<&mut RuntimeProfiler>,
     ) -> Result<i64, InterpreterError> {
-        self.execute_function_inner(module, function, args, profiler.as_deref_mut(), 0)
+        let mut heap: Vec<i64> = Vec::new();
+        self.execute_function_inner(module, function, args, profiler.as_deref_mut(), 0, &mut heap)
     }
 
     fn execute_function_inner(
@@ -65,6 +77,7 @@ impl Interpreter {
         args: &[i64],
         mut profiler: Option<&mut RuntimeProfiler>,
         depth: u32,
+        heap: &mut Vec<i64>,
     ) -> Result<i64, InterpreterError> {
         if depth > MAX_CALL_DEPTH {
             return Err(InterpreterError::CallDepthExceeded(MAX_CALL_DEPTH));
@@ -113,7 +126,7 @@ impl Interpreter {
             let mut block_result = 0i64;
 
             for inst in &block.instructions {
-                block_result = self.evaluate_instruction(module, inst, &mut variable_values, profiler.as_deref_mut(), depth)?;
+                block_result = self.evaluate_instruction(module, inst, &mut variable_values, profiler.as_deref_mut(), depth, heap)?;
                 instruction_count_in_func += 1;
 
                 if inst.is_terminator() {
@@ -141,7 +154,7 @@ impl Interpreter {
 
             match last_inst {
                 Instruction::Branch { condition, then_label, else_label } => {
-                    let cond_val = self.evaluate_instruction(module, &condition, &mut variable_values, profiler.as_deref_mut(), depth)?;
+                    let cond_val = self.evaluate_instruction(module, &condition, &mut variable_values, profiler.as_deref_mut(), depth, heap)?;
                     if cond_val != 0 {
                         current_block_name = then_label.clone();
                     } else {
@@ -170,6 +183,7 @@ impl Interpreter {
         variable_values: &mut HashMap<String, i64>,
         mut profiler: Option<&mut RuntimeProfiler>,
         depth: u32,
+        heap: &mut Vec<i64>,
     ) -> Result<i64, InterpreterError> {
         match inst {
             Instruction::Constant { value } => Ok(*value),
@@ -180,8 +194,8 @@ impl Interpreter {
                     .ok_or_else(|| InterpreterError::UndefinedVariable(name.clone()))
             }
             Instruction::BinaryOp { op, lhs, rhs } => {
-                let l = self.evaluate_instruction(module, lhs, variable_values, profiler.as_deref_mut(), depth)?;
-                let r = self.evaluate_instruction(module, rhs, variable_values, profiler.as_deref_mut(), depth)?;
+                let l = self.evaluate_instruction(module, lhs, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                let r = self.evaluate_instruction(module, rhs, variable_values, profiler.as_deref_mut(), depth, heap)?;
                 match op {
                     BinaryOp::Add => Ok(l + r),
                     BinaryOp::Sub => Ok(l - r),
@@ -196,13 +210,13 @@ impl Interpreter {
                 }
             }
             Instruction::Store { var_name, value } => {
-                let val = self.evaluate_instruction(module, value, variable_values, profiler.as_deref_mut(), depth)?;
+                let val = self.evaluate_instruction(module, value, variable_values, profiler.as_deref_mut(), depth, heap)?;
                 variable_values.insert(var_name.clone(), val);
                 Ok(val)
             }
             Instruction::Compare { condition, lhs, rhs } => {
-                let l = self.evaluate_instruction(module, lhs, variable_values, profiler.as_deref_mut(), depth)?;
-                let r = self.evaluate_instruction(module, rhs, variable_values, profiler.as_deref_mut(), depth)?;
+                let l = self.evaluate_instruction(module, lhs, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                let r = self.evaluate_instruction(module, rhs, variable_values, profiler.as_deref_mut(), depth, heap)?;
                 let result = match condition {
                     CompareCondition::Eq => l == r,
                     CompareCondition::Ne => l != r,
@@ -214,7 +228,7 @@ impl Interpreter {
                 Ok(if result { 1 } else { 0 })
             }
             Instruction::Return { value: Some(val_inst) } => {
-                self.evaluate_instruction(module, &val_inst, variable_values, profiler.as_deref_mut(), depth)
+                self.evaluate_instruction(module, &val_inst, variable_values, profiler.as_deref_mut(), depth, heap)
             }
             Instruction::Return { value: None } => Ok(0), // C++ returns 0 for void return
             Instruction::Branch { .. } | Instruction::Jump { .. } => {
@@ -226,14 +240,46 @@ impl Interpreter {
                 // can reference the caller's own variables) before we ever
                 // touch the callee, which gets a completely fresh
                 // variable_values map of its own. No shared mutable scope
-                // between caller and callee, by construction.
+                // between caller and callee, by construction. The heap IS
+                // shared though — see MAX_HEAP_SLOTS comment above.
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
-                    arg_vals.push(self.evaluate_instruction(module, a, variable_values, profiler.as_deref_mut(), depth)?);
+                    arg_vals.push(self.evaluate_instruction(module, a, variable_values, profiler.as_deref_mut(), depth, heap)?);
                 }
                 let callee = module.functions.iter().find(|f| &f.name == function_name)
                     .ok_or_else(|| InterpreterError::UndefinedFunction(function_name.clone()))?;
-                self.execute_function_inner(module, callee, &arg_vals, profiler.as_deref_mut(), depth + 1)
+                self.execute_function_inner(module, callee, &arg_vals, profiler.as_deref_mut(), depth + 1, heap)
+            }
+            Instruction::AllocaArray { name, count } => {
+                let new_len = heap.len() + count;
+                if new_len > MAX_HEAP_SLOTS {
+                    return Err(InterpreterError::HeapExhausted(*count, MAX_HEAP_SLOTS));
+                }
+                let base = heap.len() as i64;
+                heap.resize(new_len, 0);
+                variable_values.insert(name.clone(), base);
+                Ok(base)
+            }
+            Instruction::GetElementPtr { base, index } => {
+                let base_addr = self.evaluate_instruction(module, base, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                let idx = self.evaluate_instruction(module, index, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                Ok(base_addr + idx)
+            }
+            Instruction::LoadPtr { ptr } => {
+                let addr = self.evaluate_instruction(module, ptr, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                if addr < 0 || addr as usize >= heap.len() {
+                    return Err(InterpreterError::InvalidMemoryAccess(addr, heap.len()));
+                }
+                Ok(heap[addr as usize])
+            }
+            Instruction::StorePtr { ptr, value } => {
+                let addr = self.evaluate_instruction(module, ptr, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                let val = self.evaluate_instruction(module, value, variable_values, profiler.as_deref_mut(), depth, heap)?;
+                if addr < 0 || addr as usize >= heap.len() {
+                    return Err(InterpreterError::InvalidMemoryAccess(addr, heap.len()));
+                }
+                heap[addr as usize] = val;
+                Ok(val)
             }
         }
     }

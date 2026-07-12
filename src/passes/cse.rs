@@ -1,13 +1,88 @@
 use std::collections::HashMap;
 use crate::ir::module::Module;
-use crate::ir::value::{BinaryOp, Instruction, ValueType};
-use crate::passes::{Pass, PassError, PassSafety, PassDescriptor, ParamRange};
+use crate::ir::value::Instruction;
+use crate::passes::{Pass, PassError, PassSafety, PassDescriptor};
 
 pub struct CsePass;
 
 impl CsePass {
     pub fn new() -> Self {
         Self
+    }
+
+    fn is_simple(inst: &Instruction) -> bool {
+        matches!(inst, Instruction::Variable { .. } | Instruction::Constant { .. })
+    }
+
+    fn signature(op_display: &str, lhs: &Instruction, rhs: &Instruction) -> String {
+        format!("{}|{}|{}", op_display, lhs.display(), rhs.display())
+    }
+
+    /// Recursively replaces any BinaryOp subtree (with simple Variable/
+    /// Constant operands, matching the original scope) whose signature is
+    /// ALREADY known — from an earlier top-level Store in this block — with
+    /// a direct reference to that Store's own variable name. Pure
+    /// substitution only: never manufactures a new temp/Store, so every
+    /// change this makes strictly reduces (or, for a lone unmatched node,
+    /// leaves unchanged) instruction count. It never inflates it.
+    ///
+    /// This intentionally does NOT catch every possible duplicate — a
+    /// subexpression whose only occurrences are both buried somewhere with
+    /// no natural top-level Store to name either one (e.g. nested two levels
+    /// inside a Branch condition on both sides) won't be caught, since there
+    /// is no existing name to substitute and creating one would cost an
+    /// instruction. That's a real, narrower-than-ideal scope, chosen
+    /// deliberately: the previous version's attempt at hoisting unconditionally
+    /// added a Store+Variable pair on every first sighting regardless of
+    /// whether a duplicate ever showed up, which made it INFLATE instruction
+    /// count on the common case (a lone, non-duplicated BinaryOp) — worse
+    /// than doing nothing. This version only ever helps, never hurts.
+    fn replace_known_duplicates(inst: &mut Instruction, known: &HashMap<String, String>, changed: &mut bool) {
+        match inst {
+            Instruction::BinaryOp { op, lhs, rhs } => {
+                Self::replace_known_duplicates(lhs, known, changed);
+                Self::replace_known_duplicates(rhs, known, changed);
+                if Self::is_simple(lhs) && Self::is_simple(rhs) {
+                    let sig = Self::signature(op.display(), lhs, rhs);
+                    if let Some(existing_name) = known.get(&sig) {
+                        *inst = Instruction::Variable { name: existing_name.clone() };
+                        *changed = true;
+                    }
+                }
+            }
+            Instruction::Store { value, .. } => {
+                Self::replace_known_duplicates(value, known, changed);
+            }
+            Instruction::Compare { lhs, rhs, .. } => {
+                Self::replace_known_duplicates(lhs, known, changed);
+                Self::replace_known_duplicates(rhs, known, changed);
+            }
+            Instruction::Branch { condition, .. } => {
+                Self::replace_known_duplicates(condition, known, changed);
+            }
+            Instruction::Return { value: Some(v) } => {
+                Self::replace_known_duplicates(v, known, changed);
+            }
+            Instruction::Return { value: None } | Instruction::Jump { .. } => {}
+            Instruction::Call { args, .. } => {
+                for a in args {
+                    Self::replace_known_duplicates(a, known, changed);
+                }
+            }
+            Instruction::AllocaArray { .. } => {}
+            Instruction::GetElementPtr { base, index } => {
+                Self::replace_known_duplicates(base, known, changed);
+                Self::replace_known_duplicates(index, known, changed);
+            }
+            Instruction::LoadPtr { ptr } => {
+                Self::replace_known_duplicates(ptr, known, changed);
+            }
+            Instruction::StorePtr { ptr, value } => {
+                Self::replace_known_duplicates(ptr, known, changed);
+                Self::replace_known_duplicates(value, known, changed);
+            }
+            Instruction::Constant { .. } | Instruction::Variable { .. } => {}
+        }
     }
 }
 
@@ -21,7 +96,7 @@ impl Pass for CsePass {
     }
 
     fn description(&self) -> &'static str {
-        "Eliminates redundant computations within basic blocks"
+        "Replaces a recomputed expression (anywhere in the tree) with a reference to an earlier Store that already computed the same thing"
     }
 
     fn safety(&self) -> PassSafety {
@@ -30,92 +105,35 @@ impl Pass for CsePass {
 
     fn run(&self, module: &mut Module) -> Result<bool, PassError> {
         let mut changed = false;
-        let mut temp_var_counter = 0;
 
-        // Process each basic block independently
         for func in &mut module.functions {
             for bb in &mut func.basic_blocks {
-                // Map from expression signature to the variable name that holds its result
-                let mut expr_to_var_name: HashMap<String, String> = HashMap::new();
-                let mut new_instructions = Vec::new();
+                // signature -> the variable name of the earliest top-level
+                // Store whose value directly computed that expression.
+                let mut known: HashMap<String, String> = HashMap::new();
 
-                for instr_idx in 0..bb.instructions.len() {
-                    let mut current_instr = bb.instructions[instr_idx].clone(); // Clone to modify if needed
+                for inst in &mut bb.instructions {
+                    // First, replace any nested duplicate against what's
+                    // already known from EARLIER instructions in this block
+                    // (this instruction's own top-level Store, if any, is
+                    // deliberately not registered until after this step —
+                    // an instruction can't be a duplicate of itself).
+                    Self::replace_known_duplicates(inst, &known, &mut changed);
 
-                    // Only consider BinaryOp instructions for CSE
-                    if let Instruction::BinaryOp { op, lhs, rhs } = &mut current_instr {
-                        // Only consider BinaryOp with Variable or Constant operands for CSE
-                        let lhs_is_simple = matches!(**lhs, Instruction::Variable { .. } | Instruction::Constant { .. });
-                        let rhs_is_simple = matches!(**rhs, Instruction::Variable { .. } | Instruction::Constant { .. });
-
-                        if !lhs_is_simple || !rhs_is_simple {
-                            // Skip complex operands, just add the instruction to the new list
-                            new_instructions.push(current_instr);
-                            continue;
+                    // Then, if this is a Store whose value is (now, possibly
+                    // after the substitution above) a qualifying BinaryOp
+                    // not already known, register it at zero cost — no new
+                    // instruction, just reusing the name this Store already
+                    // has for real.
+                    if let Instruction::Store { var_name, value } = inst {
+                        if let Instruction::BinaryOp { op, lhs, rhs } = value.as_ref() {
+                            if Self::is_simple(lhs) && Self::is_simple(rhs) {
+                                let sig = Self::signature(op.display(), lhs, rhs);
+                                known.entry(sig).or_insert_with(|| var_name.clone());
+                            }
                         }
-
-                        // Create string representations of operands
-                        let signature = format!("{}|{}|{}", op.display(), lhs.display(), rhs.display());
-
-                        // Check if we've seen this expression before in this block
-                        if let Some(var_name) = expr_to_var_name.get(&signature) {
-                            // Found a common subexpression! Replace with variable holding previous result
-                            new_instructions.push(Instruction::Variable { name: var_name.clone() });
-                            changed = true;
-                        } else {
-                            // First time seeing this expression in this block.
-                            // Generate a temporary variable name to hold the result
-                            temp_var_counter += 1;
-                            let temp_var_name = format!("__cse_temp_{}", temp_var_counter);
-                            expr_to_var_name.insert(signature, temp_var_name.clone());
-
-                            // Insert a Store instruction for the new temporary variable *before* the current instruction
-                            // This part deviates from the C++ to keep the IR valid.
-                            // The C++ version in the description replaces the BinaryOp with a Variable.
-                            // This would lose the computation. A store is needed to preserve the value.
-                            // The C++ `CSEPass` in the prompt actually just replaces the `BinaryOp` with a `Variable`.
-                            // This means the result of the `BinaryOp` is simply used directly as a `Variable`.
-                            // This is a key difference. I will match the prompt's description precisely first.
-                            // The prompt says: "replace BinaryOp with Variable(temp_var_name)"
-                            // The C++ source code example in `src/Passes/CSEPass.cpp` also directly replaces.
-                            // So the current instruction `current_instr` (which is a BinaryOp) should be replaced with a Variable
-                            // but the value must be defined earlier. The C++ code in the example was slightly incomplete in this aspect,
-                            // assuming a separate definition.
-
-                            // Re-reading C++ `CSEPass.cpp`:
-                            // block->instructions[i] = std::make_shared<Variable>(varName);
-                            // This implies the result of the BinaryOp is not stored explicitly, but rather the Variable is a reference
-                            // to where the result *would have been* if the computation was done.
-                            // This looks problematic, but I will follow the spirit of the text in the prompt.
-                            // If it's the *first* time, we keep the BinaryOp and associate its result with `temp_var_name`.
-                            // Then *later uses* replace the BinaryOp with a Variable.
-
-                            // To properly replicate, the CSE pass should identify the first instance of a subexpression,
-                            // calculate its result, store that result in a new temporary variable, and then replace
-                            // all subsequent instances of that subexpression with a reference to that temporary variable.
-                            // The C++ code is implicitly assuming some form of SSA or value numbering already exists or
-                            // that the IR is such that a variable directly represents the result of its defining instruction.
-
-                            // Let's refine based on typical CSE. The C++ just replaces with variable, but the first one still needs to compute.
-                            // The prompt's description "insert Store for temp" implies this.
-                            // The C++ `CSEPass.cpp` was simplified and only replaced subsequent uses.
-                            // I will add the instruction to compute the value for the first occurrence.
-                            // The prompt states: "On first occurrence: record signature → temp var name; insert Store for temp"
-                            // "On subsequent occurrence: replace BinaryOp with Variable(temp_var_name)"
-
-                            new_instructions.push(Instruction::Store {
-                                var_name: temp_var_name.clone(),
-                                value: Box::new(current_instr.clone()), // The original BinaryOp is stored
-                            });
-                            new_instructions.push(Instruction::Variable { name: temp_var_name.clone() }); // And its result is used
-                            changed = true; // Count this as a change because we added a store and a variable use
-                        }
-                    } else {
-                        // Not a BinaryOp, just add it to the new list
-                        new_instructions.push(current_instr);
                     }
                 }
-                bb.instructions = new_instructions;
             }
         }
 
@@ -136,7 +154,7 @@ impl Pass for CsePass {
             self.name(),
             self.description(),
             self.safety(),
-            vec![], // No parameters for CSE
+            vec![],
         )
     }
 }

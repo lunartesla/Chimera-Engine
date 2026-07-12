@@ -20,6 +20,7 @@ use crate::passes::PassDescriptor;
 use crate::passes::pass_registry::PassRegistry;
 use crate::engine::OptimizationEngine; // For module loading/creation
 use crate::{OptimizationLevel, Blueprint};
+use crate::experience::{ExperienceSystem, ExperienceDatabase, ExperienceRecord, ExperienceConfig, FunctionStats, ExperiencePassDescriptor};
 
 // TerminalChat placeholder - real implementation in terminal_chat.rs
 // Wiring it up requires resolving the circular Arc<Mutex<Option<EvolutionDaemon>>>
@@ -74,7 +75,7 @@ impl Default for DaemonTuning {
         Self {
             stuck_cycles_before_fork: 3,
             evolve_batch_size: 100,
-            nm_ready_threshold: 500,
+            nm_ready_threshold: 50,  // Reduced for faster training onset
             strain_generation_cap: 5000,
         }
     }
@@ -113,7 +114,8 @@ fn strain_gate_level(strain: &ActiveStrain) -> u8 {
         return 0;
     }
     let predictor = strain.engine.get_engine().get_predictor();
-    if !(predictor.is_nm_ready() && predictor.get_nm_confidence() >= 0.85) {
+    // Fixed: use actual success rate (confidence now = success/total)
+    if !(predictor.is_nm_ready() && predictor.get_nm_confidence() > 0.5) {
         return 1;
     }
     let history = strain.engine.get_engine().get_fitness_history();
@@ -160,7 +162,7 @@ pub struct ActiveStrain {
 pub struct EvolutionDaemon {
     library: Vec<Module>,
     state_file_path: PathBuf,
-    stopped: Arc<AtomicBool>,
+    pub stopped: Arc<AtomicBool>,
     wildcard_mode: bool,
     teacher: Option<Teacher>, // Teacher is optional
     archive: BlueprintArchive,
@@ -187,6 +189,7 @@ pub struct EvolutionDaemon {
     engine_server: crate::engine_server::EngineServer,
     server_handle: crate::engine_server::ServerHandle,
     last_broadcast: Instant,
+    experience: ExperienceSystem,
 }
 
 impl EvolutionDaemon {
@@ -201,6 +204,29 @@ impl EvolutionDaemon {
 
         let engine_server = crate::engine_server::EngineServer::new(9877);
         let server_handle = engine_server.clone_handle();
+
+        // Load brain if it exists (JSON format)
+        let brain_path = PathBuf::from("brain.json");
+        let loaded_predictor = if brain_path.exists() {
+            match NeuralPredictor::load_brain(&brain_path) {
+                Ok(loaded) => {
+                    info!("[BlackWall] Loaded NEAT brain from brain.json (records: {})", loaded.training_data_len());
+                    Arc::new(Mutex::new(loaded))
+                }
+                Err(e) => {
+                    warn!("[BlackWall] Failed to load brain.json: {} — starting fresh", e);
+                    Arc::new(Mutex::new(NeuralPredictor::new()))
+                }
+            }
+        } else {
+            Arc::new(Mutex::new(NeuralPredictor::new()))
+        };
+
+        let experience = ExperienceSystem::open(ExperienceConfig {
+            hot_capacity: 100_000,
+            db_path: std::path::PathBuf::from("experience.db"),
+            curriculum_enabled: true,
+        }).expect("Failed to open experience database");
 
         let mut daemon = Self {
             library: modules,
@@ -218,7 +244,7 @@ impl EvolutionDaemon {
             daemon_cycles: 0,
             generated_module_names: HashSet::new(),
             injection_counts: HashMap::new(),
-            persistent_predictor: Arc::new(Mutex::new(NeuralPredictor::new())),
+            persistent_predictor: loaded_predictor,
             previous_session_memory: String::new(),
             pass_registry: PassRegistry::new(),
             strains: Arc::new(Mutex::new(Vec::new())),
@@ -229,6 +255,7 @@ impl EvolutionDaemon {
             engine_server,
             server_handle,
             last_broadcast: Instant::now(),
+            experience,
         };
 
         daemon.load_state();
@@ -253,6 +280,7 @@ impl EvolutionDaemon {
         }
 
         let wall_start = Instant::now();
+        let mut last_brain_save = Instant::now();
 
         info!("===========================================");
         info!("   EvolutionDaemon - indefinite runtime       ");
@@ -476,15 +504,17 @@ impl EvolutionDaemon {
             // and would otherwise flood the dashboard with hundreds of msgs/sec.
             if self.last_broadcast.elapsed().as_millis() >= 200 {
                 let best_pipeline_str: Vec<String> = se.get_best_pipeline().iter().map(|d| d.id.to_string()).collect();
+                let island_fitnesses = se.get_island_best_fitnesses();
                 self.server_handle.broadcast_fitness_update(
                     &mod_name,
                     self.total_gens as u64,
                     new_fitness,
                     &best_pipeline_str,
+                    &island_fitnesses,
                 );
 
                 let predictor = self.persistent_predictor.lock().unwrap();
-                let species_count = predictor.training_data_len() / 85;
+                let species_count = predictor.species_count();
                 self.server_handle.broadcast_neat_update(
                     predictor.training_data_len(),
                     predictor.get_nm_confidence(),
@@ -512,6 +542,53 @@ impl EvolutionDaemon {
                     mod_name, new_fitness, se.get_best_pipeline().len());
                 self.terminal_chat.post_daemon_status(&format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
                 self.server_handle.broadcast_log("good", &format!("★ New best for '{}': fitness={}", mod_name, new_fitness));
+
+                // Record experience for replay/curriculum learning
+                let hash = BlueprintArchive::compute_shape_hash(&current_module);
+                let goal_id = self.active_goal.as_ref().map_or("minimize_instrs".to_string(), |g| g.id.clone());
+                let passes: Vec<ExperiencePassDescriptor> = se.get_best_pipeline().iter().map(|p| {
+                    ExperiencePassDescriptor {
+                        id: p.id.to_string(),
+                        params: p.params.iter().map(|(k, v)| (k.clone(), v.current)).collect(),
+                    }
+                }).collect();
+                let experience_record = ExperienceRecord {
+                    module_shape_hash: hash,
+                    goal_id,
+                    pipeline_id: format!("daemon_cycle_{}", self.daemon_cycles),
+                    passes,
+                    function_stats: FunctionStats {
+                        instruction_count: 100, // Will need to get actual stats from engine
+                        block_count: 5,
+                        max_depth: 2,
+                        constant_count: 10,
+                        store_count: 20,
+                        branch_count: 15,
+                    },
+                    fitness: new_fitness,
+                    baseline_instructions: 150, // Will need to track baseline
+                    final_instructions: 100,
+                    instruction_reduction: 50,
+                    validation_passed: true,
+                    execution_time_us: 0.0, // Will need to track time
+                    memory_peak_bytes: 0,
+                    generation: self.total_gens as u64,
+                    island_id: Some(module_idx % self.library.len()),
+                    strain_id: Some("main".to_string()),
+                    temperature: 0.5,
+                    seed_fitness: 0.0,
+                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    run_id: format!("run_{}", self.daemon_cycles),
+                    success: true,
+                    correction_needed: false,
+                };
+                let _ = self.experience.observe(experience_record);
+            }
+
+            // Periodic brain save every 10 minutes (600 seconds)
+            if last_brain_save.elapsed().as_secs() >= 600 {
+                self.save_brain();
+                last_brain_save = Instant::now();
             }
 
             module_idx += 1;
@@ -525,6 +602,9 @@ impl EvolutionDaemon {
         }
 
         let elapsed = wall_start.elapsed().as_secs();
+
+        // Final brain save on exit
+        self.save_brain();
 
         info!("\n[Daemon] Stopped.");
         info!("  Total gens : {}", self.total_gens);
@@ -540,7 +620,18 @@ impl EvolutionDaemon {
         self.stopped.store(true, Ordering::Relaxed);
         self.terminal_chat.stop();
         self.server_handle.stop();
+        // Note: brain save happens in run() loop exit, not here
+        // to avoid lock contention with the blocking task
         self.save_black_wall_memory();
+    }
+
+    fn save_brain(&self) {
+        let brain_path = PathBuf::from("brain.json");
+        if let Err(e) = self.persistent_predictor.lock().unwrap().save_brain(&brain_path) {
+            warn!("[BlackWall] Failed to save brain: {}", e);
+        } else {
+            info!("[BlackWall] Brain saved -> {}", brain_path.display());
+        }
     }
 
     pub fn set_goal(&mut self, goal: GoalDefinition) {

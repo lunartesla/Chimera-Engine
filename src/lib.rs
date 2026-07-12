@@ -19,6 +19,7 @@ pub mod dashboard;
 pub mod teacher;
 pub mod neural_predictor;
 pub mod llvm_frontend;
+pub mod experience;
 
 #[cfg(not(feature = "no-capi"))]
 pub mod capi;

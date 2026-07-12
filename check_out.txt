@@ -29,13 +29,13 @@ warning: value assigned to `demo_mode` is never read
     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
 
 warning: unused variable: `server_handle`
-   --> src\main.rs:318:9
+   --> src\main.rs:320:9
     |
-318 |     let server_handle = tokio::spawn(async move {
+320 |     let server_handle = tokio::spawn(async move {
     |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_server_handle`
     |
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
 warning: `metamorphic_engine` (bin "metamorphic") generated 4 warnings (run `cargo fix --bin "metamorphic" -p 
 metamorphic_engine` to apply 3 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.51s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.00s

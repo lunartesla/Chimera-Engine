@@ -1,0 +1,22 @@
+﻿cargo :    Compiling metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+At line:1 char:59
++ ... gine\Rust'; cargo run --release --example diagnose_arrays 2>&1 | Out- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling me...ry engine\Rust):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `release` profile [optimized] target(s) in 56.65s
+     Running `target\release\examples\diagnose_arrays.exe`
+Module 'target_arraytest' ÔÇö 1 function(s), baseline instrs: 15, ceiling: 15
+  fn 'array_sum' params=["0"] blocks=4
+Interpreted result: Ok(150)
+Expected: Ok(150)  (10+20+30+40+50)
+
+Testing all 7 passes against the array-containing module:
+  [strength_reduction] changed=false instrs_after=15 passed=true details=
+  [constant_propagation] changed=false instrs_after=15 passed=true details=
+  [cse] changed=false instrs_after=15 passed=true details=
+  [dead_code] changed=true instrs_after=14 passed=true details=
+  [constant_folding] changed=false instrs_after=15 passed=true details=
+  [block_merge] changed=false instrs_after=15 passed=true details=
+  [loop_unroll] changed=true instrs_after=18 passed=true details=

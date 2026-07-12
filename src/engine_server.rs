@@ -219,13 +219,27 @@ impl ServerHandle {
         generation: u64,
         best_fitness: f64,
         best_pipeline: &[String],
+        island_fitnesses: &[f64],
     ) {
-        // Islands are static for now - will be populated from daemon data
-        let islands = vec![
-            (0, best_fitness + 0.2, generation, true),
-            (1, best_fitness - 1.9, generation.saturating_sub(16), false),
-            (2, best_fitness - 4.2, generation.saturating_sub(38), false),
-        ];
+        // Real per-island best fitness, from SelfEvolvingEngine's actual
+        // population_fitness slices (see get_island_best_fitnesses) —
+        // previously this was `best_fitness + fixed_offset` per island,
+        // fabricated numbers with no connection to the real 3-island
+        // population this engine actually runs. Generation is reported as
+        // the same cumulative total_gens for every island since islands
+        // migrate/evolve together each cycle — there's no meaningfully
+        // different "per-island generation" to report separately, unlike
+        // fitness which genuinely does differ per island.
+        let lead_idx = island_fitnesses
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i);
+        let islands: Vec<_> = island_fitnesses
+            .iter()
+            .enumerate()
+            .map(|(id, fitness)| (id, *fitness, generation, Some(id) == lead_idx))
+            .collect();
         let msg = serde_json::json!({
             "type": "fitness_update",
             "module_name": module_name,

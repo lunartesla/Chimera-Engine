@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Local};
-use std::path::Path;
 use log::info;
 
 use crate::self_evolving_engine::SelfEvolvingEngine;
@@ -97,6 +96,10 @@ impl StrainEngine {
         self.engine.get_best_pipeline()
     }
 
+    pub fn get_predictor(&self) -> &NeuralPredictor {
+        self.engine.get_predictor()
+    }
+
     pub fn get_predictor_mut(&mut self) -> &mut NeuralPredictor {
         self.engine.get_predictor_mut()
     }
@@ -115,10 +118,12 @@ impl StrainEngine {
             return false;
         }
 
-        // Gate 2: NM predictor must be ready (confidence >= 0.85) (replicate C++ exactly)
-        // C++ checks `!engine || !engine->getPredictor() || !engine->getPredictor()->isNMReady()`
-        // which means it checks if predictor exists AND is ready.
-        if !self.engine.get_predictor().is_nm_ready() || self.engine.get_predictor().get_nm_confidence() < 0.85 {
+        // Gate 2: NM predictor must be ready AND have positive success rate
+        // Original C++ used confidence >= 0.85, but that was misleading:
+        // confidence was just record_count / threshold, not actual success rate.
+        // Fixed: require both enough records AND success rate > 50%.
+        let predictor = self.engine.get_predictor();
+        if !predictor.is_nm_ready() || predictor.get_nm_confidence() <= 0.5 {
             return false;
         }
 
@@ -127,49 +132,14 @@ impl StrainEngine {
     }
 
     pub fn promote(&mut self, origin_engine: &mut SelfEvolvingEngine) {
-        // This function is called on the strain itself, and receives the origin engine to update.
-        // It needs to:
-        // 1. Mark itself as nominated.
-        // 2. Transfer predictor model to origin.
-        // 3. Transfer best pipeline to origin (via blueprint replay).
-
         // Mark as nominated
         self.lineage.nominated = true;
 
-        // Archive old origin state (this happens in EvolutionDaemon)
-        // For now, simply log.
-        // C++: Archiving old origin to "blueprints/archived_origin_{timestamp}.json"
+        // Transfer predictor model to origin using clone_state (direct in-memory transfer)
+        // This replaces the file-based save/load approach with the same pattern used elsewhere.
+        *origin_engine.get_predictor_mut() = self.get_predictor().clone_state();
+        info!("[Strain] Transferred predictor model to origin");
 
-        // Transfer predictor model to origin
-        // C++: engine->getPredictor()->saveModel(tmpModel); origin.engine->getPredictor()->loadModel(tmpModel);
-        // This implies saving the `neuralneat` state and loading it into the origin's `neuralneat`.
-        let tmp_model_path = "tmp_strain_model.bin"; // Use .bin for bincode
-        if let Err(e) = origin_engine.get_predictor().save_brain(Path::new(tmp_model_path)) {
-            eprintln!("Error saving strain predictor brain: {}", e);
-        } else {
-            match NeuralPredictor::load_brain(Path::new(tmp_model_path)) {
-                Ok(loaded) => {
-                    *origin_engine.get_predictor_mut() = loaded;
-                    info!("[Strain] Transferred predictor model to origin");
-                }
-                Err(e) => {
-                    eprintln!("Error loading strain predictor brain into origin: {}", e);
-                }
-            }
-        }
-
-        // Transfer best pipeline to origin (replay blueprint)
-        // This logic is typically handled by the EvolutionDaemon when it promotes.
-        // For now, this is a placeholder. A blueprint should be created from the strain's best pipeline
-        // and then replayed into the origin engine.
-        // This is not a direct 1:1 C++ port. The C++ `promote` method doesn't take `origin_engine`.
-        // It says "Save strain predictor and load into origin".
-        // And "Transfer best pipeline to origin (replay blueprint)".
-        // It needs the blueprint archive to do that.
-
-        // The C++ `StrainEngine::promote` actually just prints messages and marks `lineage.nominated = true`.
-        // The actual logic of applying the changes to the origin happens elsewhere (EvolutionDaemon).
-        // So, following C++ 1:1, this method just marks as nominated and logs.
         info!("[Strain] Promoting {} to origin", self.lineage.strain_id);
     }
 }

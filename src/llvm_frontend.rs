@@ -158,8 +158,17 @@ fn parse_function_body(
     params: &[String],
     body_lines: &[String],
     param_value: Option<i64>,
+    ptr_params: &std::collections::HashSet<String>,
 ) -> Result<FunctionParse> {
     let label_re = Regex::new(r"^([A-Za-z0-9_.$]+):\s*(;.*)?$").unwrap();
+    // Array form MUST be checked before the generic scalar alloca_re below —
+    // "alloca [5 x i32]" satisfies alloca_re's `alloca\b` just as well as a
+    // scalar alloca does (space after "alloca" is a word boundary either
+    // way), so without this ordering every array alloca silently got
+    // recorded as a plain scalar var with no size info, and any GEP
+    // referencing it would only be caught later by the catch-all bail —
+    // not corruption, but a confusing failure far from the real cause.
+    let alloca_array_re = Regex::new(r"^%([A-Za-z0-9_.$]+)\s*=\s*alloca\s*\[\s*(\d+)\s*x\s+[A-Za-z0-9_]+\s*\]").unwrap();
     let alloca_re = Regex::new(r"^%([A-Za-z0-9_.$]+)\s*=\s*alloca\b").unwrap();
     let load_re = Regex::new(r"^%([A-Za-z0-9_.$]+)\s*=\s*load\s+[^,]+,\s*ptr\s+%([A-Za-z0-9_.$]+)").unwrap();
     let store_re = Regex::new(r"^store\s+[A-Za-z0-9_]+\s+(.+?),\s*ptr\s+%([A-Za-z0-9_.$]+)").unwrap();
@@ -177,6 +186,20 @@ fn parse_function_body(
     // type, an explicit known-type token (avoids ambiguity with those
     // attribute words), the callee name, and its argument list.
     let call_re = Regex::new(r"^(?:%([A-Za-z0-9_.$]+)\s*=\s*)?(?:tail\s+|musttail\s+|notail\s+)?call\s+(?:\w+\s+)*?(void|i1|i8|i16|i32|i64|i128|float|double|ptr)\s+@([A-Za-z0-9_.$]+)\s*\(([^)]*)\)").unwrap();
+    // GEP, Phase 2 of LLVM-format adoption. Two real clang -O0 shapes:
+    //   array form:   %p = getelementptr [N x TYPE], ptr %arr, i64 0, i64 %idx
+    //                 (the local array decays through its own alloca'd
+    //                 pointer; the leading "i64 0" dereferences that pointer
+    //                 itself before indexing — always literally 0 for our
+    //                 single-dimension-array subset)
+    //   pointer form: %p = getelementptr TYPE, ptr %arg, i64 %idx
+    //                 (base is already a plain pointer — a function
+    //                 parameter, or the result of a previous GEP)
+    // Both collapse to the same GetElementPtr{base, index} — this IR has no
+    // per-type byte-size tracking (uniform i64-slot heap, see
+    // interpreter.rs), so the element type token itself is discarded.
+    let gep_array_re = Regex::new(r"^%([A-Za-z0-9_.$]+)\s*=\s*getelementptr\s+(?:inbounds\s+)?\[\s*\d+\s+x\s+[A-Za-z0-9_]+\s*\]\s*,\s*ptr\s+%([A-Za-z0-9_.$]+)\s*,\s*(?:i64|i32)\s+0\s*,\s*(?:i64|i32)\s+(.+)$").unwrap();
+    let gep_ptr_re = Regex::new(r"^%([A-Za-z0-9_.$]+)\s*=\s*getelementptr\s+(?:inbounds\s+)?[A-Za-z0-9_]+\s*,\s*ptr\s+%([A-Za-z0-9_.$]+)\s*,\s*(?:i64|i32)\s+(.+)$").unwrap();
 
     let mut ssa: SsaMap = HashMap::new();
     let mut alloca_vars: HashMap<String, String> = HashMap::new(); // ptr reg -> var name
@@ -186,7 +209,25 @@ fn parse_function_body(
             // Top-level target: nothing calls it, so bake a representative
             // value the same way module_builders.rs bakes "n" — this IR has
             // no caller to supply a real argument for the entry point.
+            //
+            // Pointer-typed entry params are refused outright rather than
+            // baked: a baked scalar Constant has no backing heap allocation
+            // behind it, so any GetElementPtr/LoadPtr/StorePtr against it
+            // would read/write garbage addresses instead of failing loudly.
+            // If the array actually needs to be caller-visible, target a
+            // wrapper function that declares the array itself with a local
+            // `alloca [N x TYPE]` instead of accepting it as a parameter.
             for p in params {
+                if ptr_params.contains(p) {
+                    bail!(
+                        "function '{}' takes pointer parameter '%{}' as its ENTRY point — \
+                         entry parameters get baked as scalar constants with no backing \
+                         allocation, so a pointer here would read/write garbage addresses. \
+                         Target a wrapper function that allocates the array itself \
+                         (`alloca [N x TYPE]`) instead of accepting it as a parameter.",
+                        fn_name, p
+                    );
+                }
                 ssa.insert(p.clone(), Instruction::Constant { value: v });
             }
         }
@@ -194,6 +235,10 @@ fn parse_function_body(
             // Callee reached via a real Call: parameters are genuine
             // runtime values bound by the interpreter at call time, not
             // baked constants — see Function.params / execute_function.
+            // Pointer params are fine here: the interpreter binds them to
+            // whatever real address the caller passed (see Call handling
+            // in interpreter.rs), backed by real heap storage the caller
+            // allocated.
             for p in params {
                 ssa.insert(p.clone(), Instruction::Variable { name: p.clone() });
             }
@@ -230,6 +275,25 @@ fn parse_function_body(
             continue;
         }
 
+        if let Some(m) = alloca_array_re.captures(line) {
+            let reg = m.get(1).unwrap().as_str().to_string();
+            let count: usize = m.get(2).unwrap().as_str().parse()
+                .map_err(|_| anyhow!("invalid array size in alloca: {}", line))?;
+            // Unlike scalar alloca (which just records a name mapping and
+            // emits nothing — the engine's existing Store/Variable model
+            // handles scalars implicitly), an array alloca is a REAL
+            // instruction: it reserves heap slots at runtime (see
+            // Instruction::AllocaArray in interpreter.rs) and must be
+            // emitted into the block, not just tracked in a side table.
+            current_block.append(Instruction::AllocaArray { name: reg.clone(), count });
+            // Also register in ssa so GEP/resolve_operand can resolve `%reg`
+            // as a base pointer the same way it resolves a pointer
+            // parameter — both are just "an i64 address value" from the
+            // parser's point of view.
+            ssa.insert(reg.clone(), Instruction::Variable { name: reg });
+            continue;
+        }
+
         if let Some(m) = alloca_re.captures(line) {
             let reg = m.get(1).unwrap().as_str().to_string();
             // The alloca register name IS the variable name — clean and
@@ -241,21 +305,40 @@ fn parse_function_body(
         if let Some(m) = load_re.captures(line) {
             let dest = m.get(1).unwrap().as_str().to_string();
             let ptr_reg = m.get(2).unwrap().as_str();
-            let var_name = alloca_vars.get(ptr_reg).ok_or_else(|| {
-                anyhow!("load from unknown pointer register %{} (no matching alloca)", ptr_reg)
-            })?;
-            ssa.insert(dest, Instruction::Variable { name: var_name.clone() });
+            if let Some(var_name) = alloca_vars.get(ptr_reg) {
+                // Scalar path, unchanged from before Phase 2.
+                ssa.insert(dest, Instruction::Variable { name: var_name.clone() });
+            } else {
+                // Pointer path: ptr_reg must already resolve to an address
+                // expression (a GEP result, an array alloca's base, or a
+                // pointer parameter) — resolve_operand handles all three
+                // uniformly since each was inserted into ssa as an
+                // Instruction expression, not distinguished by type tag.
+                let ptr_expr = resolve_operand(&format!("%{}", ptr_reg), &ssa).map_err(|_| {
+                    anyhow!("load from register %{} that is neither a known scalar alloca \
+                             nor a resolvable pointer expression", ptr_reg)
+                })?;
+                ssa.insert(dest, Instruction::LoadPtr { ptr: Box::new(ptr_expr) });
+            }
             continue;
         }
 
         if let Some(m) = store_re.captures(line) {
             let value_tok = m.get(1).unwrap().as_str();
             let ptr_reg = m.get(2).unwrap().as_str();
-            let var_name = alloca_vars.get(ptr_reg).ok_or_else(|| {
-                anyhow!("store to unknown pointer register %{} (no matching alloca)", ptr_reg)
-            })?.clone();
-            let value = resolve_operand(value_tok, &ssa)?;
-            current_block.append(Instruction::Store { var_name, value: Box::new(value) });
+            if let Some(var_name) = alloca_vars.get(ptr_reg) {
+                // Scalar path, unchanged from before Phase 2.
+                let var_name = var_name.clone();
+                let value = resolve_operand(value_tok, &ssa)?;
+                current_block.append(Instruction::Store { var_name, value: Box::new(value) });
+            } else {
+                let ptr_expr = resolve_operand(&format!("%{}", ptr_reg), &ssa).map_err(|_| {
+                    anyhow!("store to register %{} that is neither a known scalar alloca \
+                             nor a resolvable pointer expression", ptr_reg)
+                })?;
+                let value = resolve_operand(value_tok, &ssa)?;
+                current_block.append(Instruction::StorePtr { ptr: Box::new(ptr_expr), value: Box::new(value) });
+            }
             continue;
         }
 
@@ -360,11 +443,48 @@ fn parse_function_body(
             continue;
         }
 
-        // Anything else (getelementptr, extractvalue, phi, switch,
-        // unreachable, vector ops, invoke, ...) is out of scope for this IR
-        // — fail loudly with the offending line rather than silently
-        // dropping it and producing a module that looks fine but behaves
-        // wrong.
+        // Array form MUST be tried before pointer form — see the comment
+        // on gep_array_re's construction above for why the two shapes are
+        // structurally distinct enough that this isn't ambiguous.
+        if let Some(m) = gep_array_re.captures(line) {
+            let dest = m.get(1).unwrap().as_str().to_string();
+            let base_reg = m.get(2).unwrap().as_str();
+            let index_tok = m.get(3).unwrap().as_str();
+            let base = resolve_operand(&format!("%{}", base_reg), &ssa).map_err(|_| {
+                anyhow!("getelementptr base register %{} is not a known array/pointer", base_reg)
+            })?;
+            let index = resolve_operand(index_tok, &ssa)?;
+            ssa.insert(dest, Instruction::GetElementPtr { base: Box::new(base), index: Box::new(index) });
+            continue;
+        }
+
+        if let Some(m) = gep_ptr_re.captures(line) {
+            let dest = m.get(1).unwrap().as_str().to_string();
+            let base_reg = m.get(2).unwrap().as_str();
+            let index_tok = m.get(3).unwrap().as_str();
+            let base = resolve_operand(&format!("%{}", base_reg), &ssa).map_err(|_| {
+                anyhow!("getelementptr base register %{} is not a known array/pointer", base_reg)
+            })?;
+            let index = resolve_operand(index_tok, &ssa)?;
+            ssa.insert(dest, Instruction::GetElementPtr { base: Box::new(base), index: Box::new(index) });
+            continue;
+        }
+
+        // Skip LLVM intrinsics (`call void @llvm.*`) and other unsupported constructs
+        // without failing - allows parsing Rust/compiled LLVM output for targets that
+        // use simpler internal functions
+        if line.contains("call void @llvm.") {
+            continue;
+        }
+        if line.contains("invoke ") && line.contains("@llvm.") {
+            continue;
+        }
+
+        // Anything else (extractvalue, phi, switch, unreachable, vector
+        // ops, invoke, multi-dimensional/struct GEP, ...) is out of scope
+        // for this IR — fail loudly with the offending line rather than
+        // silently dropping it and producing a module that looks fine but
+        // behaves wrong.
         bail!(
             "unsupported LLVM IR construct in function '{}': {}",
             fn_name, line
@@ -408,6 +528,16 @@ fn collect_called_functions(inst: &Instruction, out: &mut std::collections::Hash
         Instruction::Return { value: Some(v) } => collect_called_functions(v, out),
         Instruction::Constant { .. } | Instruction::Variable { .. }
         | Instruction::Jump { .. } | Instruction::Return { value: None } => {}
+        Instruction::AllocaArray { .. } => {}
+        Instruction::GetElementPtr { base, index } => {
+            collect_called_functions(base, out);
+            collect_called_functions(index, out);
+        }
+        Instruction::LoadPtr { ptr } => collect_called_functions(ptr, out),
+        Instruction::StorePtr { ptr, value } => {
+            collect_called_functions(ptr, out);
+            collect_called_functions(value, out);
+        }
     }
 }
 
@@ -444,6 +574,17 @@ fn find_and_parse_definition(text: &str, name: &str, bake_param_value: Option<i6
         .map(|c| c.get(1).unwrap().as_str().to_string())
         .collect();
 
+    // Detect pointer-typed params (e.g. "ptr noundef %arr") so
+    // parse_function_body can refuse pointer parameters on the ENTRY
+    // function specifically — see the bail! in parse_function_body's
+    // Some(v) branch for why baking a pointer as a plain scalar constant
+    // would be silently wrong rather than just unsupported.
+    let ptr_param_re = Regex::new(r"\bptr\b[^,]*%([A-Za-z0-9_.$]+)").unwrap();
+    let ptr_params: std::collections::HashSet<String> = ptr_param_re
+        .captures_iter(param_list_str)
+        .map(|c| c.get(1).unwrap().as_str().to_string())
+        .collect();
+
     let rest = &text[body_start..];
     let mut depth = 1i32;
     let mut end_idx = None;
@@ -464,7 +605,7 @@ fn find_and_parse_definition(text: &str, name: &str, bake_param_value: Option<i6
     let body_text = &rest[..end_idx];
     let body_lines: Vec<String> = body_text.lines().map(|l| l.to_string()).collect();
 
-    let parsed = parse_function_body(name, return_type, &params, &body_lines, bake_param_value)
+    let parsed = parse_function_body(name, return_type, &params, &body_lines, bake_param_value, &ptr_params)
         .with_context(|| format!("while parsing function '{}'", name))?;
 
     Ok(parsed.function)

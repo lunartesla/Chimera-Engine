@@ -1,0 +1,5 @@
+C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\deps\mimalloc-bd847b0800f8bfa5.d: C:\Users\atimo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mimalloc-0.1.52\src\lib.rs
+
+C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\deps\libmimalloc-bd847b0800f8bfa5.rmeta: C:\Users\atimo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mimalloc-0.1.52\src\lib.rs
+
+C:\Users\atimo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mimalloc-0.1.52\src\lib.rs:

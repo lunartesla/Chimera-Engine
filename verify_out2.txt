@@ -1,0 +1,86 @@
+﻿cargo :    Compiling metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+At line:1 char:59
++ ... gine\Rust'; cargo run --release --example verify_modules 2>&1 | Out-F ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling me...ry engine\Rust):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `release` profile [optimized] target(s) in 1m 01s
+     Running `target\release\examples\verify_modules.exe`
+=== simple_sum ===
+  baseline instrs: 12, functions: 1
+  interpreted result: Ok(570)
+    [constant_propagation] changed=true instrs_after=12 passed=true
+    [constant_folding] changed=false instrs_after=12 passed=true
+    [strength_reduction] changed=false instrs_after=12 passed=true
+    [dead_code] changed=true instrs_after=10 passed=true
+    [cse] changed=false instrs_after=12 passed=true
+    [block_merge] changed=false instrs_after=12 passed=true
+    [loop_unroll] changed=true instrs_after=17 passed=true
+
+=== fib_loop ===
+  baseline instrs: 16, functions: 1
+  interpreted result: Ok(987)
+    [constant_folding] changed=false instrs_after=16 passed=true
+    [block_merge] changed=false instrs_after=16 passed=true
+    [strength_reduction] changed=false instrs_after=16 passed=true
+    [loop_unroll] changed=true instrs_after=22 passed=true
+    [cse] changed=false instrs_after=16 passed=true
+    [dead_code] changed=false instrs_after=16 passed=true
+    [constant_propagation] changed=true instrs_after=16 passed=true
+
+=== nested_loop ===
+  baseline instrs: 10, functions: 1
+  interpreted result: Ok(140)
+    [cse] changed=false instrs_after=10 passed=true
+    [block_merge] changed=false instrs_after=10 passed=true
+    [loop_unroll] changed=true instrs_after=14 passed=true
+    [dead_code] changed=false instrs_after=10 passed=true
+    [constant_folding] changed=false instrs_after=10 passed=true
+    [constant_propagation] changed=true instrs_after=10 passed=true
+    [strength_reduction] changed=false instrs_after=10 passed=true
+
+=== branch_heavy ===
+  baseline instrs: 16, functions: 1
+  interpreted result: Ok(-8)
+    [constant_propagation] changed=true instrs_after=16 passed=true
+    [strength_reduction] changed=true instrs_after=16 passed=true
+    [block_merge] changed=false instrs_after=16 passed=true
+    [constant_folding] changed=false instrs_after=16 passed=true
+    [loop_unroll] changed=false instrs_after=16 passed=true
+    [cse] changed=false instrs_after=16 passed=true
+    [dead_code] changed=false instrs_after=16 passed=true
+
+=== entropy_loop ===
+  baseline instrs: 14, functions: 1
+  interpreted result: Ok(408)
+    [constant_propagation] changed=true instrs_after=14 passed=true
+    [block_merge] changed=false instrs_after=14 passed=true
+    [constant_folding] changed=false instrs_after=14 passed=true
+    [loop_unroll] changed=true instrs_after=21 passed=true
+    [dead_code] changed=false instrs_after=14 passed=true
+    [strength_reduction] changed=false instrs_after=14 passed=true
+    [cse] changed=true instrs_after=14 passed=true
+
+=== array_reduce ===
+  baseline instrs: 20, functions: 1
+  interpreted result: Ok(108)
+    [constant_folding] changed=false instrs_after=20 passed=true
+    [dead_code] changed=true instrs_after=18 passed=true
+    [constant_propagation] changed=false instrs_after=20 passed=true
+    [cse] changed=false instrs_after=20 passed=true
+    [strength_reduction] changed=true instrs_after=20 passed=true
+    [block_merge] changed=false instrs_after=20 passed=true
+    [loop_unroll] changed=true instrs_after=25 passed=true
+
+=== recursive_calls ===
+  baseline instrs: 13, functions: 2
+  interpreted result: Ok(55)
+    [loop_unroll] changed=true instrs_after=18 passed=true
+    [strength_reduction] changed=false instrs_after=13 passed=true
+    [constant_propagation] changed=true instrs_after=13 passed=true
+    [dead_code] changed=true instrs_after=11 passed=true
+    [block_merge] changed=false instrs_after=13 passed=true
+    [constant_folding] changed=false instrs_after=13 passed=true
+    [cse] changed=false instrs_after=13 passed=true
+

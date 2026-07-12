@@ -10,8 +10,6 @@ use anyhow::{Result, Context, bail};
 use serde::Serialize;
 
 use metamorphic_engine::ir::module::Module;
-use metamorphic_engine::ir::function::Function;
-use metamorphic_engine::ir::value::ValueType;
 use metamorphic_engine::engine::OptimizationEngine;
 use metamorphic_engine::passes::OptimizationLevel;
 use metamorphic_engine::interpreter::Interpreter;
@@ -296,6 +294,17 @@ async fn run_daemon(wildcard: bool, goal_name: &str, target: Option<TargetSpec>)
             module_builders::build_nested_loop(8),
             module_builders::build_branch_heavy(16),
             module_builders::build_entropy_loop(24),
+            module_builders::build_array_reduce(3),
+            module_builders::build_recursive_calls(10),
+            module_builders::build_digital_root(15),
+            module_builders::build_two_phase_product(10),
+            module_builders::build_triangle_numbers(10),
+            module_builders::build_factorial_memo(6),
+            module_builders::build_gcd_euclidean(20),
+            module_builders::build_call_chain(8),
+            module_builders::build_complex_expr(5),
+            module_builders::build_prefix_sum(6),
+            module_builders::build_multi_exit(10),
         ];
         info!("Synthetic modules: {}", modules.len());
 
@@ -329,7 +338,6 @@ async fn run_daemon(wildcard: bool, goal_name: &str, target: Option<TargetSpec>)
     );
     daemon.set_tuning(std::sync::Arc::clone(&tuning));
 
-
     let goal = match goal_name {
         "minimize_instrs" => GoalDefinition::minimize_instructions(8),
         "minimize_time" => GoalDefinition::minimize_time(10.0),
@@ -342,7 +350,8 @@ async fn run_daemon(wildcard: bool, goal_name: &str, target: Option<TargetSpec>)
     // Set the engine server reference for broadcasting
     daemon.set_engine_server(engine_server);
 
-    // Run in a separate thread to not block the async runtime
+    let stopped = daemon.stopped.clone();
+
     let handle = tokio::task::spawn_blocking(move || {
         daemon.run();
     });
@@ -352,6 +361,7 @@ async fn run_daemon(wildcard: bool, goal_name: &str, target: Option<TargetSpec>)
         _ = handle => {}
         _ = tokio::signal::ctrl_c() => {
             info!("Ctrl-C received, shutting down daemon");
+            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

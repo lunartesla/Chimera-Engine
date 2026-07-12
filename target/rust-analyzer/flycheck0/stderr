@@ -1,0 +1,142 @@
+   0.286756100s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint: stale: changed "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\experience\\mod.rs"
+   0.286812400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:           (vs) "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\target\\debug\\.fingerprint\\metamorphic_engine-d5df5a0f50cfde3b\\dep-lib-metamorphic_engine"
+   0.286821500s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13428353625, nanos: 950712300 } < FileTime { seconds: 13428353814, nanos: 199513600 }
+   0.287188800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { ..: lib_target("metamorphic_engine", ["lib"], "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\lib.rs", Edition2021) }
+   0.287233100s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\target\\debug\\.fingerprint\\metamorphic_engine-d5df5a0f50cfde3b\\dep-lib-metamorphic_engine", reference_mtime: FileTime { seconds: 13428353625, nanos: 950712300 }, stale: "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\experience\\mod.rs", stale_mtime: FileTime { seconds: 13428353814, nanos: 199513600 } }))
+   0.342813100s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint: stale: changed "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\experience\\database.rs"
+   0.342844800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:           (vs) "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\target\\debug\\.fingerprint\\metamorphic_engine-9ad5bdb977b8940a\\dep-test-lib-metamorphic_engine"
+   0.342853500s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13428353625, nanos: 950712300 } < FileTime { seconds: 13428353972, nanos: 215179000 }
+   0.343058800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { ..: lib_target("metamorphic_engine", ["lib"], "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\lib.rs", Edition2021) }
+   0.343091400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic_engine"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\target\\debug\\.fingerprint\\metamorphic_engine-9ad5bdb977b8940a\\dep-test-lib-metamorphic_engine", reference_mtime: FileTime { seconds: 13428353625, nanos: 950712300 }, stale: "C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\experience\\database.rs", stale_mtime: FileTime { seconds: 13428353972, nanos: 215179000 } }))
+   0.354588200s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { name: "metamorphic", doc: true, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\main.rs", Edition2021) }
+   0.354628300s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.355957400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { name: "metamorphic", doc: true, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\src\\main.rs", Edition2021) }
+   0.355985800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="metamorphic"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.357255300s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="mod"}: cargo::core::compiler::fingerprint: fingerprint error for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { kind: "test", name: "mod", benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\tests\\mod.rs", Edition2021) }
+   0.357282400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="mod"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\.fingerprint\metamorphic_engine-26ee04707b275440\test-integration-test-mod`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.368310500s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="property_tests"}: cargo::core::compiler::fingerprint: fingerprint error for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { kind: "test", name: "property_tests", benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\tests\\property_tests.rs", Edition2021) }
+   0.368353800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="property_tests"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\.fingerprint\metamorphic_engine-adef2f520df56e4f\test-integration-test-property_tests`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.369766600s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="validator_test"}: cargo::core::compiler::fingerprint: fingerprint error for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { kind: "test", name: "validator_test", benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\tests\\validator_test.rs", Edition2021) }
+   0.369798800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="validator_test"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\.fingerprint\metamorphic_engine-e06c8aeb733a5a7e\test-integration-test-validator_test`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.371079900s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="engine_bench"}: cargo::core::compiler::fingerprint: fingerprint error for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: true }/TargetInner { kind: "bench", name: "engine_bench", tested: false, harness: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\benches\\engine_bench.rs", Edition2021) }
+   0.371108500s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="engine_bench"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\mediatek\engine_back_up\Evolutionary engine\Rust\target\debug\.fingerprint\metamorphic_engine-248adcc7fcc514cb\test-bench-engine_bench`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.372526600s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_arrays"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { kind: "example", name: "diagnose_arrays", tested: false, benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\examples\\diagnose_arrays.rs", Edition2021) }
+   0.372551100s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_arrays"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.374220100s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_calls"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { kind: "example", name: "diagnose_calls", tested: false, benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\examples\\diagnose_calls.rs", Edition2021) }
+   0.374244000s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_calls"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.375563800s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_loop"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { kind: "example", name: "diagnose_loop", tested: false, benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\examples\\diagnose_loop.rs", Edition2021) }
+   0.375587400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_loop"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.376931400s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_memory"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { kind: "example", name: "diagnose_memory", tested: false, benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\examples\\diagnose_memory.rs", Edition2021) }
+   0.376953300s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="diagnose_memory"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+   0.378330700s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="verify_modules"}: cargo::core::compiler::fingerprint: fingerprint dirty for metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)/Check { test: false }/TargetInner { kind: "example", name: "verify_modules", tested: false, benched: false, ..: with_path("C:\\mediatek\\engine_back_up\\Evolutionary engine\\Rust\\examples\\verify_modules.rs", Edition2021) }
+   0.378353000s  INFO prepare_target{force=false package_id=metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust) target="verify_modules"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "metamorphic_engine" })
+    Checking metamorphic_engine v2.0.0 (C:\mediatek\engine_back_up\Evolutionary engine\Rust)
+error: could not compile `metamorphic_engine` (bench "engine_bench") due to 8 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `metamorphic_engine` (test "validator_test") due to 5 previous errors; 1 warning emitted
+error: could not compile `metamorphic_engine` (test "property_tests") due to 10 previous errors
+error: could not compile `metamorphic_engine` (test "mod") due to 25 previous errors; 9 warnings emitted

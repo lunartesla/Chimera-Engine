@@ -1,107 +1,123 @@
 {
-  "branch_heavy": {
+  "gcd_euclidean": {
     "pass_ids": [
-      "cse",
-      "loop_unroll",
       "constant_folding",
       "strength_reduction",
-      "block_merge",
-      "constant_folding",
-      "constant_folding",
-      "constant_folding",
-      "constant_propagation",
-      "loop_unroll",
-      "dead_code",
-      "block_merge",
-      "strength_reduction",
-      "dead_code"
+      "constant_propagation"
     ],
     "params": [
-      {},
-      {
-        "factor": 2
-      },
       {
         "iterations": 5
       },
       {},
+      {
+        "max_iterations": 10
+      }
+    ],
+    "fitness": 0.0
+  },
+  "digital_root": {
+    "pass_ids": [
+      "block_merge",
+      "block_merge",
+      "cse",
+      "strength_reduction"
+    ],
+    "params": [
       {
         "max_iterations": 5
       },
-      {
-        "iterations": 5
-      },
-      {
-        "iterations": 5
-      },
-      {
-        "iterations": 5
-      },
-      {
-        "max_iterations": 10
-      },
-      {
-        "factor": 2
-      },
-      {},
       {
         "max_iterations": 5
       },
       {},
       {}
     ],
-    "fitness": 1.0
+    "fitness": 0.0
   },
-  "nested_loop": {
+  "complex_expr": {
+    "pass_ids": [
+      "cse",
+      "block_merge",
+      "constant_folding",
+      "loop_unroll",
+      "constant_propagation",
+      "dead_code",
+      "strength_reduction",
+      "loop_unroll",
+      "constant_folding",
+      "strength_reduction",
+      "constant_folding",
+      "dead_code",
+      "dead_code",
+      "constant_propagation",
+      "constant_folding",
+      "constant_propagation",
+      "dead_code",
+      "constant_propagation"
+    ],
+    "params": [
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "iterations": 5
+      },
+      {},
+      {
+        "iterations": 5
+      },
+      {},
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {
+        "max_iterations": 10
+      }
+    ],
+    "fitness": 12.0
+  },
+  "call_chain": {
     "pass_ids": [
       "constant_folding",
-      "block_merge",
-      "constant_propagation",
-      "loop_unroll",
-      "strength_reduction",
-      "constant_propagation",
-      "constant_propagation",
-      "strength_reduction",
-      "loop_unroll",
-      "strength_reduction",
-      "dead_code",
-      "loop_unroll",
-      "loop_unroll"
+      "cse",
+      "constant_folding",
+      "cse"
     ],
     "params": [
       {
         "iterations": 5
       },
-      {
-        "max_iterations": 5
-      },
-      {
-        "max_iterations": 10
-      },
-      {
-        "factor": 2
-      },
       {},
       {
-        "max_iterations": 10
+        "iterations": 5
       },
-      {
-        "max_iterations": 10
-      },
-      {},
-      {
-        "factor": 2
-      },
-      {},
-      {},
-      {
-        "factor": 2
-      },
-      {
-        "factor": 2
-      }
+      {}
     ],
-    "fitness": 1.0
+    "fitness": 0.0
   },
   "entropy_loop": {
     "pass_ids": [
@@ -188,6 +204,164 @@
     ],
     "fitness": 1.0
   },
+  "two_phase_product": {
+    "pass_ids": [
+      "cse",
+      "block_merge",
+      "constant_folding",
+      "cse",
+      "dead_code",
+      "constant_propagation",
+      "constant_propagation",
+      "dead_code",
+      "strength_reduction",
+      "dead_code"
+    ],
+    "params": [
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {},
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {},
+      {}
+    ],
+    "fitness": 5.0
+  },
+  "fib_loop": {
+    "pass_ids": [
+      "constant_propagation",
+      "constant_propagation",
+      "dead_code",
+      "cse",
+      "constant_folding",
+      "cse",
+      "cse",
+      "dead_code",
+      "cse",
+      "loop_unroll",
+      "block_merge",
+      "strength_reduction",
+      "constant_propagation",
+      "dead_code",
+      "cse"
+    ],
+    "params": [
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {},
+      {
+        "iterations": 5
+      },
+      {},
+      {},
+      {},
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "max_iterations": 5
+      },
+      {},
+      {
+        "max_iterations": 10
+      },
+      {},
+      {}
+    ],
+    "fitness": 3.0
+  },
+  "branch_heavy": {
+    "pass_ids": [
+      "cse",
+      "loop_unroll",
+      "constant_folding",
+      "strength_reduction",
+      "block_merge",
+      "constant_folding",
+      "constant_folding",
+      "constant_folding",
+      "constant_propagation",
+      "loop_unroll",
+      "dead_code",
+      "block_merge",
+      "strength_reduction",
+      "dead_code"
+    ],
+    "params": [
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "iterations": 5
+      },
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {
+        "max_iterations": 5
+      },
+      {},
+      {}
+    ],
+    "fitness": 1.0
+  },
+  "factorial_memo": {
+    "pass_ids": [
+      "dead_code",
+      "constant_folding",
+      "strength_reduction",
+      "cse",
+      "constant_folding"
+    ],
+    "params": [
+      {},
+      {
+        "iterations": 5
+      },
+      {},
+      {},
+      {
+        "iterations": 5
+      }
+    ],
+    "fitness": 0.0
+  },
   "simple_sum": {
     "pass_ids": [
       "constant_propagation",
@@ -261,23 +435,104 @@
     ],
     "fitness": 1.0
   },
-  "fib_loop": {
+  "prefix_sum": {
     "pass_ids": [
       "constant_propagation",
       "dead_code",
-      "cse",
-      "constant_folding",
-      "cse",
-      "cse",
-      "dead_code",
-      "cse",
-      "dead_code",
+      "constant_propagation",
+      "constant_propagation"
+    ],
+    "params": [
+      {
+        "max_iterations": 10
+      },
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      }
+    ],
+    "fitness": 0.0
+  },
+  "array_reduce": {
+    "pass_ids": [
+      "strength_reduction",
+      "strength_reduction",
+      "constant_propagation",
       "block_merge",
+      "constant_folding",
+      "constant_propagation",
+      "block_merge",
+      "constant_folding",
+      "constant_propagation",
+      "constant_folding",
+      "constant_folding",
+      "constant_folding",
+      "strength_reduction"
+    ],
+    "params": [
+      {},
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {}
+    ],
+    "fitness": 0.0
+  },
+  "multi_exit": {
+    "pass_ids": [
+      "constant_propagation",
+      "dead_code",
+      "strength_reduction",
+      "loop_unroll",
+      "dead_code",
+      "dead_code",
       "strength_reduction",
       "constant_propagation",
       "constant_propagation",
-      "loop_unroll",
-      "cse"
+      "constant_propagation",
+      "block_merge",
+      "dead_code",
+      "block_merge",
+      "constant_folding",
+      "strength_reduction",
+      "block_merge",
+      "block_merge",
+      "dead_code",
+      "dead_code",
+      "constant_folding",
+      "constant_propagation",
+      "constant_folding"
     ],
     "params": [
       {
@@ -286,19 +541,144 @@
       {},
       {},
       {
-        "iterations": 5
+        "factor": 2
       },
       {},
       {},
       {},
-      {},
-      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
       {
         "max_iterations": 5
       },
       {},
       {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "max_iterations": 5
+      },
+      {},
+      {},
+      {
+        "iterations": 5
+      },
+      {
         "max_iterations": 10
+      },
+      {
+        "iterations": 5
+      }
+    ],
+    "fitness": 2.0
+  },
+  "recursive_calls": {
+    "pass_ids": [
+      "block_merge",
+      "loop_unroll",
+      "cse",
+      "strength_reduction",
+      "cse",
+      "constant_folding",
+      "loop_unroll",
+      "constant_folding",
+      "loop_unroll",
+      "cse",
+      "loop_unroll",
+      "cse",
+      "cse",
+      "dead_code",
+      "constant_folding",
+      "constant_propagation",
+      "dead_code",
+      "loop_unroll",
+      "loop_unroll",
+      "cse",
+      "dead_code"
+    ],
+    "params": [
+      {
+        "max_iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {},
+      {},
+      {
+        "iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {
+        "factor": 2
+      },
+      {},
+      {},
+      {},
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {}
+    ],
+    "fitness": 1.0
+  },
+  "nested_loop": {
+    "pass_ids": [
+      "constant_folding",
+      "block_merge",
+      "constant_propagation",
+      "loop_unroll",
+      "strength_reduction",
+      "constant_propagation",
+      "constant_propagation",
+      "strength_reduction",
+      "loop_unroll",
+      "strength_reduction",
+      "dead_code",
+      "loop_unroll",
+      "loop_unroll"
+    ],
+    "params": [
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 5
       },
       {
         "max_iterations": 10
@@ -306,6 +686,109 @@
       {
         "factor": 2
       },
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {
+        "factor": 2
+      },
+      {},
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "factor": 2
+      }
+    ],
+    "fitness": 1.0
+  },
+  "triangle": {
+    "pass_ids": [
+      "strength_reduction",
+      "constant_folding",
+      "constant_propagation",
+      "cse",
+      "constant_propagation",
+      "constant_propagation",
+      "constant_folding",
+      "loop_unroll",
+      "strength_reduction",
+      "block_merge",
+      "constant_folding",
+      "loop_unroll",
+      "block_merge",
+      "block_merge",
+      "cse",
+      "dead_code",
+      "loop_unroll",
+      "constant_propagation",
+      "block_merge",
+      "block_merge",
+      "strength_reduction",
+      "dead_code",
+      "dead_code",
+      "cse"
+    ],
+    "params": [
+      {},
+      {
+        "iterations": 5
+      },
+      {
+        "max_iterations": 10
+      },
+      {},
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {},
+      {
+        "max_iterations": 5
+      },
+      {
+        "iterations": 5
+      },
+      {
+        "factor": 2
+      },
+      {
+        "max_iterations": 5
+      },
+      {
+        "max_iterations": 5
+      },
+      {},
+      {},
+      {
+        "factor": 2
+      },
+      {
+        "max_iterations": 10
+      },
+      {
+        "max_iterations": 5
+      },
+      {
+        "max_iterations": 5
+      },
+      {},
+      {},
+      {},
       {}
     ],
     "fitness": 1.0

@@ -259,10 +259,14 @@ impl SelfEvolvingEngine {
                     extra_features.insert("goal_ratio".to_string(), 0.0);
 
                     let prediction = self.neural_predictor.predict("constant_folding", &stats, &extra_features);
+                    // Multi-head: use success_prob weighted by opt_confidence
                     let success_prob = prediction.as_ref().map(|p| p.success_prob as f64).unwrap_or(0.5);
+                    let opt_conf = prediction.as_ref().map(|p| p.opt_confidence as f64).unwrap_or(0.5);
 
                     let mut rng = rand::thread_rng();
-                    if success_prob > rng.gen::<f64>() {
+                    // Incorporate confidence: lower confidence means more random exploration
+                    let effective_prob = success_prob * opt_conf + 0.5 * (1.0 - opt_conf);
+                    if effective_prob > rng.gen::<f64>() {
                         applied_mutation_type = Mutation::Add;
                     } else {
                         let opts = [Mutation::Remove, Mutation::Reorder, Mutation::Duplicate, Mutation::Tune];
@@ -455,10 +459,14 @@ impl SelfEvolvingEngine {
                     extra_features.insert("goal_ratio".to_string(), 0.0);
 
                     let prediction = self.neural_predictor.predict("constant_folding", &stats, &extra_features);
+                    // Multi-head: use success_prob weighted by opt_confidence
                     let success_prob = prediction.as_ref().map(|p| p.success_prob as f64).unwrap_or(0.5);
+                    let opt_conf = prediction.as_ref().map(|p| p.opt_confidence as f64).unwrap_or(0.5);
 
                     let mut rng = rand::thread_rng();
-                    if success_prob > rng.gen::<f64>() {
+                    // Incorporate confidence: lower confidence means more random exploration
+                    let effective_prob = success_prob * opt_conf + 0.5 * (1.0 - opt_conf);
+                    if effective_prob > rng.gen::<f64>() {
                         applied_mutation_type = Mutation::Add;
                     } else {
                         let opts = [Mutation::Remove, Mutation::Reorder, Mutation::Duplicate, Mutation::Tune];
@@ -584,6 +592,28 @@ impl SelfEvolvingEngine {
 
     pub fn get_best_fitness(&self) -> f64 {
         self.best_known_fitness
+    }
+
+    /// Real per-island best fitness — same computation migrate_islands()
+    /// already does internally (max over each island's population_fitness
+    /// slice), just exposed for external reporting. This replaces what was
+    /// previously a fake formula in engine_server.rs's broadcast
+    /// (`best_fitness + fixed_offset` per island — not real per-island
+    /// state at all, just arithmetic dressed up to look like one).
+    pub fn get_island_best_fitnesses(&self) -> Vec<f64> {
+        (0..NUM_ISLANDS)
+            .map(|i| {
+                let start = i * ISLAND_SIZE;
+                let end = (start + ISLAND_SIZE).min(self.population_fitness.len());
+                if start >= end {
+                    return self.best_known_fitness;
+                }
+                self.population_fitness[start..end]
+                    .iter()
+                    .cloned()
+                    .fold(f64::NEG_INFINITY, f64::max)
+            })
+            .collect()
     }
 
     pub fn get_best_pipeline(&self) -> &[PassDescriptor] {

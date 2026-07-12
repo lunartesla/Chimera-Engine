@@ -1,8 +1,15 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValueType {
     Int,
     Float,
     Void,
+    /// Phase 2: pointee type tracked mainly for documentation/debugging —
+    /// our memory model is uniformly i64-per-slot (see GetElementPtr), so
+    /// nothing currently uses this for size computation. Kept as a real
+    /// field rather than erased so a future struct/byte-addressed memory
+    /// model doesn't require yet another type-system rework.
+    Pointer(Box<ValueType>),
+    Array(Box<ValueType>, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -71,6 +78,34 @@ pub enum Instruction {
         function_name: String,
         args: Vec<Box<Instruction>>,
     },
+    /// Phase 2 of LLVM-format adoption: a real addressable memory model.
+    /// Reserves `count` contiguous i64 slots in the interpreter's heap
+    /// (zero-initialized) and binds `name` to the base address — same named
+    /// HashMap<String,i64> used for plain scalars holds this too, since an
+    /// address is just an i64; the *instruction type* used to access it
+    /// (Variable for scalars vs GetElementPtr/LoadPtr/StorePtr for this)
+    /// is what determines interpretation, not a tagged value type.
+    AllocaArray {
+        name: String,
+        count: usize,
+    },
+    /// Computes `base_address + index` into the heap. Deliberately the
+    /// simplified single-dimension form — real LLVM getelementptr supports
+    /// multi-index struct+array addressing with per-type byte sizes; we
+    /// collapse everything to uniform i64 slots and one index, which covers
+    /// the common `arr[i]` pattern and nothing fancier (struct field access,
+    /// multi-dimensional arrays) by design, not by oversight.
+    GetElementPtr {
+        base: Box<Instruction>,
+        index: Box<Instruction>,
+    },
+    LoadPtr {
+        ptr: Box<Instruction>,
+    },
+    StorePtr {
+        ptr: Box<Instruction>,
+        value: Box<Instruction>,
+    },
 }
 
 impl Instruction {
@@ -115,6 +150,14 @@ impl Instruction {
             Instruction::Call { function_name, args } => {
                 let args_str = args.iter().map(|a| a.display()).collect::<Vec<_>>().join(", ");
                 format!("call {}({})", function_name, args_str)
+            }
+            Instruction::AllocaArray { name, count } => format!("alloca [{} x i64] -> {}", count, name),
+            Instruction::GetElementPtr { base, index } => {
+                format!("gep {}, {}", base.display(), index.display())
+            }
+            Instruction::LoadPtr { ptr } => format!("load *({})", ptr.display()),
+            Instruction::StorePtr { ptr, value } => {
+                format!("store {} -> *({})", value.display(), ptr.display())
             }
         }
     }

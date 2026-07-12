@@ -1,0 +1,7 @@
+tools:
+    shell:
+        allow:
+            - mkdir *
+paths:
+    allow:
+        - path: C:/Users/atimo/.config/poolside/skills/**
